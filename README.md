@@ -29,7 +29,14 @@ Python 3.11+ uses `tomllib`; Python 3.9/3.10 use `tomli`.
 ## Install
 
 ~~~console
-uv tool install "tunneld @ git+https://github.com/goodboys-ai/tunneld"
+uv tool install tunneld
+~~~
+
+`pipx install tunneld` works too. To pin an exact release from GitHub:
+
+~~~console
+uv tool install --force \\
+  "tunneld @ git+https://github.com/goodboys-ai/tunneld@v0.3.1"
 ~~~
 
 ## Quick start

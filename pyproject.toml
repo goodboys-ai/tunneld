@@ -4,7 +4,26 @@ version = "0.3.1"
 description = "Config-driven SSH tunnel manager: one SSH connection per tunnel, many -L/-D/-R forwards, auto-reconnect."
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "goodboys-ai" }]
+keywords = ["ssh", "tunnel", "autossh", "port-forwarding", "socks5", "daemon"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: System Administrators",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Internet",
+  "Topic :: System :: Networking",
+]
 dependencies = [
   "pydantic>=2.7,<3",
   "tomli>=2; python_version < '3.11'",
@@ -15,6 +34,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/goodboys-ai/tunneld"
 Repository = "https://github.com/goodboys-ai/tunneld"
+Issues = "https://github.com/goodboys-ai/tunneld/issues"
 
 [project.optional-dependencies]
 dev = [
