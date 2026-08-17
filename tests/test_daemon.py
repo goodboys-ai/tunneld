@@ -67,6 +67,13 @@ class FakeSupervisor:
         self.argv = argv
         self.updated += 1
 
+    def begin_stop(self):
+        self.stopped += 1
+        return object()
+
+    def finish_stop(self, proc, deadline):
+        pass
+
 
 def _one_tunnel(label="db", local=15432):
     return parse_config(
@@ -281,3 +288,75 @@ def test_serve_survives_worker_thread_start_failure(tmp_path, monkeypatch):
     daemon._stop.set()
     serve_thread.join(timeout=3)
     assert not serve_thread.is_alive()
+
+
+def _two_tunnel_config():
+    return parse_config(
+        {
+            "tunnels": [
+                {
+                    "name": "a",
+                    "host": "h1",
+                    "forwards": [{"local": 15432, "remote": 5432}],
+                },
+                {
+                    "name": "b",
+                    "host": "h2",
+                    "forwards": [{"local": 15433, "remote": 5433}],
+                },
+            ]
+        }
+    )
+
+
+def test_batch_stop_begins_all_before_finishing(tmp_path, monkeypatch):
+    events = []
+
+    class OrderSupervisor(FakeSupervisor):
+        def begin_stop(self):
+            events.append(("begin", self.tunnel.name))
+            return object()
+
+        def finish_stop(self, proc, deadline):
+            events.append(("finish", self.tunnel.name, deadline))
+
+    monkeypatch.setattr("tunneld.daemon.Supervisor", OrderSupervisor)
+    monkeypatch.setattr("tunneld.daemon.time.monotonic", lambda: 0.0)
+    daemon = Daemon(str(tmp_path / "config.toml"))
+    daemon.config = _two_tunnel_config()
+    daemon.apply()
+    daemon.stop_all()
+    assert events == [
+        ("begin", "a"),
+        ("begin", "b"),
+        ("finish", "a", 12.0),
+        ("finish", "b", 12.0),
+    ]
+    assert daemon.sup == {}
+
+
+def test_apply_batch_stops_obsolete_supervisors(tmp_path, monkeypatch):
+    events = []
+
+    class OrderSupervisor(FakeSupervisor):
+        def begin_stop(self):
+            events.append(("begin", self.tunnel.name))
+            return object()
+
+        def finish_stop(self, proc, deadline):
+            events.append(("finish", self.tunnel.name))
+
+    monkeypatch.setattr("tunneld.daemon.Supervisor", OrderSupervisor)
+    monkeypatch.setattr("tunneld.daemon.time.monotonic", lambda: 0.0)
+    daemon = Daemon(str(tmp_path / "config.toml"))
+    daemon.config = _two_tunnel_config()
+    daemon.apply()
+    daemon.config = parse_config({})
+    daemon.apply()
+    assert events == [
+        ("begin", "a"),
+        ("begin", "b"),
+        ("finish", "a"),
+        ("finish", "b"),
+    ]
+    assert daemon.sup == {}

@@ -6,13 +6,14 @@ import os
 import signal
 import socket
 import threading
-from typing import Dict, Optional
+import time
+from typing import Dict, List, Optional
 
 from . import state
 from .command import build_command, build_forward_specs
 from .config import AppConfig, ConfigError, TunnelConfig, load_config
 from .ipc import IPC_PROTOCOL_VERSION, IPC_TIMEOUT_SECONDS, handle_connection
-from .supervisor import Supervisor
+from .supervisor import STOP_BUDGET_SECONDS, Supervisor
 
 
 def _safe(name: str) -> str:
@@ -79,8 +80,7 @@ class Daemon:
             obsolete = [name for name in self.sup if name not in desired]
             obsolete_sups = [self.sup.pop(name) for name in obsolete]
 
-        for supervisor in obsolete_sups:
-            supervisor.stop()
+        self._stop_batch(obsolete_sups)
 
         for name, (tunnel, argv) in desired.items():
             with self._lock:
@@ -110,6 +110,13 @@ class Daemon:
             self.apply()
             return True
 
+    def _stop_batch(self, supervisors: List[Supervisor]) -> None:
+        """Begin stopping every supervisor, then finish within one shared deadline."""
+        deadline = time.monotonic() + STOP_BUDGET_SECONDS
+        procs = [supervisor.begin_stop() for supervisor in supervisors]
+        for supervisor, proc in zip(supervisors, procs):
+            supervisor.finish_stop(proc, deadline)
+
     def start_all(self) -> None:
         """Clear manual stops and start every enabled tunnel."""
         with self._lock:
@@ -133,8 +140,7 @@ class Daemon:
             names = list(self.sup)
             self.manual_stopped.update(names)
             supervisors = [self.sup.pop(name) for name in names]
-        for supervisor in supervisors:
-            supervisor.stop()
+        self._stop_batch(supervisors)
 
     def stop_one(self, name: str) -> None:
         """Stop one tunnel and remember its manual-stop state."""
@@ -346,8 +352,7 @@ class Daemon:
         with self._lock:
             supervisors = list(self.sup.values())
             self.sup.clear()
-        for supervisor in supervisors:
-            supervisor.stop()
+        self._stop_batch(supervisors)
 
     def _wait_for_signal(self) -> None:
         event = threading.Event()

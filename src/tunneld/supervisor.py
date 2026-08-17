@@ -13,6 +13,7 @@ from .config import TunnelConfig
 
 LOG_LIMIT_BYTES = 10 * 1024 * 1024
 LOG_TAIL_KEEP_BYTES = 64 * 1024
+STOP_BUDGET_SECONDS = 12.0
 
 
 def _truncate_log(logf, prev_path: str, keep_bytes: int = LOG_TAIL_KEEP_BYTES) -> None:
@@ -97,25 +98,43 @@ class Supervisor:
         self._watch_thread = threading.Thread(target=self._watch, daemon=True)
         self._watch_thread.start()
 
-    def stop(self) -> None:
-        """Stop reconnecting, terminate SSH, and join the watcher."""
+    def begin_stop(self) -> Optional[subprocess.Popen]:
+        """Set the stop flag, detach the process, and send SIGTERM without waiting."""
         self._stop.set()
         with self._lock:
             proc, self.proc = self.proc, None
         if proc is not None and proc.poll() is None:
             try:
                 proc.terminate()
-                proc.wait(timeout=5)
+            except Exception:
+                pass
+        return proc
+
+    def finish_stop(self, proc: Optional[subprocess.Popen], deadline: float) -> None:
+        """Wait for a detached process within the deadline, then kill and join."""
+        remaining = deadline - time.monotonic()
+        if proc is not None and proc.poll() is None and remaining > 0:
+            try:
+                proc.wait(timeout=remaining)
             except Exception:
                 try:
                     proc.kill()
                     proc.wait(timeout=1)
                 except Exception:
                     pass
-        if self._watch_thread is not None and self._watch_thread.is_alive():
-            self._watch_thread.join(timeout=6)
+        remaining = deadline - time.monotonic()
+        if (
+            self._watch_thread is not None
+            and self._watch_thread.is_alive()
+            and remaining > 0
+        ):
+            self._watch_thread.join(timeout=remaining)
         self._watch_thread = None
         self.state = "stopped"
+
+    def stop(self) -> None:
+        """Stop reconnecting, terminate SSH, and join the watcher."""
+        self.finish_stop(self.begin_stop(), time.monotonic() + STOP_BUDGET_SECONDS)
 
     def restart(self) -> None:
         """Stop and then start the supervised SSH process."""

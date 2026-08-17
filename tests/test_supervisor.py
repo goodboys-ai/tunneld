@@ -224,3 +224,27 @@ def test_spawn_failure_writes_are_size_limited(tmp_path, monkeypatch):
     assert "log truncated" in log.read_text()
     assert b"failed to start ssh" in (tmp_path / "t.log.prev").read_bytes()
     supervisor.stop()
+
+
+def test_two_phase_stop_begins_then_finishes(tmp_path, monkeypatch):
+    ssh = tmp_path / "ssh"
+    ssh.write_text("#!/bin/sh\nexec sleep 30\n")
+    ssh.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
+    tunnel = TunnelConfig(
+        name="t",
+        host="h",
+        forwards=[LocalForwardConfig(local=15432, remote=5432)],
+    )
+    supervisor = Supervisor(
+        tunnel, build_command(tunnel, DefaultsConfig()), str(tmp_path / "log")
+    )
+    supervisor.start()
+    time.sleep(0.4)
+    proc = supervisor.begin_stop()
+    assert supervisor._stop.is_set()
+    assert supervisor.proc is None
+    assert proc is not None
+    supervisor.finish_stop(proc, time.monotonic() + 2)
+    assert supervisor.state == "stopped"
+    assert proc.poll() is not None
