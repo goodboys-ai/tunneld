@@ -10,7 +10,6 @@ One `[[tunnels]]` entry means one SSH connection. Every entry in its
 ## Features
 
 - Local (`-L`), dynamic SOCKS5 (`-D`), and remote (`-R`) forwarding.
-- One SSH process per tunnel, regardless of forwarding-entry count.
 - Automatic reconnect with bounded exponential backoff.
 - Automatic, non-destructive config reload.
 - Strict Pydantic validation with unknown-key rejection and useful field paths.
@@ -28,14 +27,33 @@ Python 3.11+ uses `tomllib`; Python 3.9/3.10 use `tomli`.
 
 ## Install
 
+Requires Python 3.9+ and an OpenSSH client on PATH.
+
+### PyPI (recommended)
+
 ~~~console
 uv tool install tunneld
+uv tool upgrade tunneld
 ~~~
 
-`pipx install tunneld` works too. To pin an exact release from GitHub:
+### pipx
 
 ~~~console
-uv tool install --force \\
+pipx install tunneld
+pipx upgrade tunneld
+~~~
+
+### pip
+
+~~~console
+python -m pip install --user tunneld
+python -m pip install --user --upgrade tunneld
+~~~
+
+### Pin a GitHub release
+
+~~~console
+uv tool install --force \
   "tunneld @ git+https://github.com/goodboys-ai/tunneld@v0.3.1"
 ~~~
 
@@ -175,13 +193,13 @@ tunneld schema --output tunneld.schema.json
 tunneld  pid=12844  config=~/.config/tunneld/tunneld.toml
 
 prod  running  pid=12844  uptime=2h13m
-┏━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
-┃ Label    ┃ Type ┃ Route                                     ┃ State  ┃
-┡━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
-│ postgres │ -L   │ localhost:5432 → localhost:5432 (prod)    │ active │
-│ browser  │ -D   │ localhost:1080 → dynamic (SOCKS5 via prod)│ active │
-│ webhook  │ -R   │ localhost:18080 (prod) → localhost:8080   │ active │
-└──────────┴──────┴───────────────────────────────────────────┴────────┘
+┏━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ Label    ┃ Type ┃ Route                                      ┃ State  ┃
+┡━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ postgres │ -L   │ localhost:5432 → localhost:5432 (prod)     │ active │
+│ browser  │ -D   │ localhost:1080 → dynamic (SOCKS5 via prod) │ active │
+│ webhook  │ -R   │ localhost:18080 (prod) → localhost:8080    │ active │
+└──────────┴──────┴────────────────────────────────────────────┴────────┘
 ~~~
 
 The Route column always reads entry → exit; a `(host)` suffix marks the
