@@ -8,20 +8,27 @@ import sys
 from . import state
 
 
-def spawn_daemon(config_path: str) -> None:
-    state.ensure_runtime_dir()
-    logf = open(str(state.daemon_log_path()), "ab")
-    cmd = [
+def daemon_command(config_path: str) -> list[str]:
+    """Build the detached daemon command.
+
+    Typer global options must precede the subcommand name.
+    """
+    return [
         sys.executable,
         "-m",
         "tunneld",
-        "daemon",
-        "--foreground",
         "--config",
         str(config_path),
+        "daemon",
+        "--foreground",
     ]
+
+
+def spawn_daemon(config_path: str) -> None:
+    state.ensure_runtime_dir()
+    logf = open(str(state.daemon_log_path()), "ab")
     subprocess.Popen(
-        cmd,
+        daemon_command(config_path),
         stdout=logf,
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
