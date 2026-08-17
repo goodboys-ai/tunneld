@@ -1,5 +1,7 @@
 import sys
 
+import pytest
+
 from tunneld import daemonize
 from tunneld.daemonize import _rotate_if_oversize, daemon_command
 
@@ -59,3 +61,23 @@ def test_rotate_if_oversize_leaves_small_logs_alone(tmp_path):
     log.write_bytes(b"tiny")
     _rotate_if_oversize(log, generations=3, limit=100)
     assert log.read_bytes() == b"tiny"
+
+
+def test_spawn_daemon_closes_log_when_popen_fails(monkeypatch, tmp_path):
+    captured = {}
+
+    monkeypatch.setattr(daemonize.state, "ensure_runtime_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        daemonize.state, "daemon_log_path", lambda: tmp_path / "daemon.log"
+    )
+
+    def fail_to_spawn(*args, **kwargs):
+        captured["logf"] = kwargs["stdout"]
+        raise OSError("spawn failed")
+
+    monkeypatch.setattr(daemonize.subprocess, "Popen", fail_to_spawn)
+
+    with pytest.raises(OSError, match="spawn failed"):
+        daemonize.spawn_daemon("/tmp/tunneld.toml")
+
+    assert captured["logf"].closed

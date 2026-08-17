@@ -53,13 +53,12 @@ def spawn_daemon(config_path: str) -> None:
     """Spawn tunneld as a detached process using the active interpreter."""
     state.ensure_runtime_dir()
     _rotate_if_oversize(state.daemon_log_path())
-    logf = open(str(state.daemon_log_path()), "ab")  # noqa: SIM115
-    subprocess.Popen(
-        daemon_command(config_path),
-        stdout=logf,
-        stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL,
-        start_new_session=True,
-        close_fds=True,
-    )
-    logf.close()
+    with open(state.daemon_log_path(), "ab") as logf:
+        subprocess.Popen(
+            daemon_command(config_path),
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
