@@ -1,7 +1,7 @@
 import sys
 
 from tunneld import daemonize
-from tunneld.daemonize import daemon_command
+from tunneld.daemonize import _rotate_if_oversize, daemon_command
 
 
 def test_daemon_command_places_global_config_before_subcommand():
@@ -37,3 +37,25 @@ def test_spawn_daemon_passes_one_positional_command(monkeypatch, tmp_path):
     args, kwargs = calls[0]
     assert args == (daemon_command("/tmp/tunneld.toml"),)
     assert kwargs["start_new_session"] is True
+
+
+def test_rotate_if_oversize_shifts_three_generations(tmp_path):
+    log = tmp_path / "tunneld.log"
+    log.write_bytes(b"main" * 100)
+    (tmp_path / "tunneld.log.1").write_bytes(b"one")
+    (tmp_path / "tunneld.log.2").write_bytes(b"two")
+    (tmp_path / "tunneld.log.3").write_bytes(b"three")
+
+    _rotate_if_oversize(log, generations=3, limit=100)
+
+    assert not log.exists()
+    assert (tmp_path / "tunneld.log.1").read_bytes() == b"main" * 100
+    assert (tmp_path / "tunneld.log.2").read_bytes() == b"one"
+    assert (tmp_path / "tunneld.log.3").read_bytes() == b"two"
+
+
+def test_rotate_if_oversize_leaves_small_logs_alone(tmp_path):
+    log = tmp_path / "tunneld.log"
+    log.write_bytes(b"tiny")
+    _rotate_if_oversize(log, generations=3, limit=100)
+    assert log.read_bytes() == b"tiny"

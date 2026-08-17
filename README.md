@@ -221,6 +221,10 @@ tunneld --version
   daemon; use `down --keep-daemon` to retain the watcher.
 - IPC requests and responses are capped at 1 MiB. The runtime directory is
   mode `0700` and the control socket is mode `0600`.
+- Per-tunnel logs are truncated in place at 10 MiB; the last 64 KiB is
+  preserved in `<name>.log.prev`, and `logs -f` continues across truncation.
+  The daemon log rotates into three generations when it exceeds the limit at
+  daemon startup.
 - Logs live under `$XDG_RUNTIME_DIR/tunneld/logs/`, falling back to
   `~/.cache/tunneld/logs/`.
 - The PID file is informational and overwritten at startup; daemon liveness is

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -162,6 +163,18 @@ def render_check(config, show_command: bool = False) -> None:
             console.print(f"  [dim]{command}[/dim]")
 
 
+def _seek_start_if_shrunk(fh) -> bool:
+    """Rewind to the start when an open log has been truncated in place."""
+    try:
+        size = os.fstat(fh.fileno()).st_size
+    except OSError:
+        return False
+    if size < fh.tell():
+        fh.seek(0)
+        return True
+    return False
+
+
 def tail(path: Path, lines: int, follow: bool) -> None:
     """Print the tail of a binary log and optionally follow new lines."""
     with open(path, "rb") as fh:
@@ -182,4 +195,6 @@ def tail(path: Path, lines: int, follow: bool) -> None:
             if line:
                 console.print(line.decode(errors="replace"), end="")
             else:
+                if _seek_start_if_shrunk(fh):
+                    continue
                 time.sleep(0.2)

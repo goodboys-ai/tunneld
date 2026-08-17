@@ -152,3 +152,32 @@ def test_backoff_resets_after_process_was_stable(monkeypatch, tmp_path):
     assert waits == [1.0]
     assert supervisor._backoff == 2.0
     assert supervisor.state == "stopped"
+
+
+def test_truncate_log_keeps_tail_and_preserves_inode(tmp_path):
+    log = tmp_path / "t.log"
+    log.write_bytes(b"a" * 1000)
+    before = log.stat().st_ino
+    with open(log, "a+b") as logf:
+        supervisor_module._truncate_log(logf, str(log) + ".prev", keep_bytes=100)
+    assert log.stat().st_ino == before
+    content = log.read_text()
+    assert "log truncated" in content
+    assert "see t.log.prev" in content
+    assert (tmp_path / "t.log.prev").read_bytes() == b"a" * 100
+
+
+def test_pump_truncates_when_threshold_is_reached(tmp_path, monkeypatch):
+    monkeypatch.setattr(supervisor_module, "LOG_LIMIT_BYTES", 200)
+    log = tmp_path / "t.log"
+    tunnel = TunnelConfig(
+        name="t",
+        host="h",
+        forwards=[LocalForwardConfig(local=15432, remote=5432)],
+    )
+    supervisor = Supervisor(tunnel, build_command(tunnel, DefaultsConfig()), str(log))
+    lines = [b"x" * 60, b"y" * 60, b"z" * 60, b"w" * 60]
+    with open(log, "a+b") as logf:
+        supervisor._pump(iter(lines), logf)
+    assert (tmp_path / "t.log.prev").read_bytes() == b"".join(lines)
+    assert "log truncated" in log.read_text()

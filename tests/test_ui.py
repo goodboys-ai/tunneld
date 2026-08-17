@@ -143,3 +143,17 @@ def test_markup_in_daemon_fields_is_escaped():
     rendered = output.getvalue()
     assert "EVIL" in rendered
     assert "\x1b[1;31mEVIL" not in rendered
+
+
+def test_seek_start_if_shrunk_detects_truncation(tmp_path):
+    path = tmp_path / "t.log"
+    path.write_bytes(b"a" * 100)
+    with open(path, "rb") as fh:
+        fh.read(50)
+        with open(path, "wb") as writer:
+            writer.write(b"b" * 10)
+        assert ui._seek_start_if_shrunk(fh) is True
+        assert fh.tell() == 0
+    with open(path, "rb") as fh:
+        fh.read(10)
+        assert ui._seek_start_if_shrunk(fh) is False
