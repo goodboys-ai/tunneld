@@ -187,7 +187,6 @@ tunneld schema --output tunneld.schema.json
 
 ~~~text
 tunneld  pid=12844  config=/home/alice/.config/tunneld/tunneld.toml
-
 prod  running  pid=12857  uptime=2h13m
 ┏━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
 ┃ Label    ┃ Type ┃ Route                                      ┃ State  ┃
