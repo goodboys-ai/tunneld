@@ -20,6 +20,7 @@ def test_respawns_and_reports_individual_entries(tmp_path, monkeypatch):
     tunnel = TunnelConfig(
         name="t",
         host="h",
+        user="root",
         forwards=[LocalForwardConfig(label="db", local=15432, remote=5432)],
     )
     supervisor = Supervisor(
@@ -39,6 +40,7 @@ def test_respawns_and_reports_individual_entries(tmp_path, monkeypatch):
     assert supervisor.proc is not None
     assert supervisor.proc.pid != first_pid
     status = supervisor.status()
+    assert status["user"] == "root"
     assert status["forwards"][0]["label"] == "db"
     assert status["forwards"][0]["kind"] == "-L"
     supervisor.stop()

@@ -108,3 +108,38 @@ def test_render_status_defends_against_malformed_tunnel_entries():
     )
     assert "ignored malformed tunnel status entry" in rendered
     assert "partial" in rendered
+
+
+def test_markup_in_daemon_fields_is_escaped():
+    evil = "[bold red]EVIL[/bold red]"
+    output = StringIO()
+    saved = ui.console
+    ui.console = Console(file=output, force_terminal=True, width=200)
+    try:
+        ui.render_status(
+            {
+                "daemon": {"pid": 123, "config": "/config"},
+                "tunnels": [
+                    {
+                        "name": evil,
+                        "host": "h",
+                        "state": "running",
+                        "forwards": [
+                            {
+                                "label": "l",
+                                "kind": evil,
+                                "listen_side": "local",
+                                "listen": "localhost:1",
+                                "target": "localhost:1",
+                                "state": evil,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    finally:
+        ui.console = saved
+    rendered = output.getvalue()
+    assert "EVIL" in rendered
+    assert "\x1b[1;31mEVIL" not in rendered

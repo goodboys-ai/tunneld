@@ -58,9 +58,11 @@ def _route_text(entry: dict, host: str) -> str:
     if kind == "-D":
         via = f" [cyan]via {escape(host)}[/cyan]" if host else ""
         return f"{listen} [dim]→[/dim] dynamic (SOCKS5{via})"
-    if entry.get("listen_side") == "remote":
+    if kind == "-R":
         return f"{listen}{suffix} [dim]→[/dim] {target}"
-    return f"{listen} [dim]→[/dim] {target}{suffix}"
+    if kind == "-L":
+        return f"{listen} [dim]→[/dim] {target}{suffix}"
+    return f"{listen} [dim]→[/dim] {target}"
 
 
 def _entry_table(entries, host: str = "") -> Table:
@@ -78,9 +80,9 @@ def _entry_table(entries, host: str = "") -> Table:
         color = STATE_COLORS.get(entry_state, "white")
         table.add_row(
             escape(str(entry.get("label") or "—")),
-            str(entry.get("kind", "?")),
+            escape(str(entry.get("kind", "?"))),
             _route_text(entry, host),
-            f"[{color}]{entry_state}[/{color}]",
+            f"[{color}]{escape(entry_state)}[/{color}]",
         )
     return table
 
@@ -95,7 +97,7 @@ def render_status(data: dict) -> None:
         error("malformed daemon status response")
         return
     console.print(
-        f"[bold]tunneld[/bold]  pid={daemon.get('pid')}  "
+        f"[bold]tunneld[/bold]  pid={escape(str(daemon.get('pid')))}  "
         f"config={escape(str(daemon.get('config')))}"
     )
     if daemon.get("config_error"):
@@ -119,12 +121,12 @@ def render_status(data: dict) -> None:
                 str(tunnel.get("host", "?")),
                 tunnel.get("user"),
             ),
-            f"[{color}]{tunnel_state}[/{color}]",
+            f"[{color}]{escape(tunnel_state)}[/{color}]",
         ]
         if tunnel.get("pid"):
-            details.append(f"pid={tunnel['pid']}")
+            details.append(f"pid={escape(str(tunnel['pid']))}")
         if tunnel.get("uptime"):
-            details.append(f"uptime={tunnel['uptime']}")
+            details.append(f"uptime={escape(str(tunnel['uptime']))}")
         console.print("  ".join(details))
         if tunnel.get("last_error"):
             console.print(f"  [red]{escape(str(tunnel['last_error']))}[/red]")

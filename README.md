@@ -180,7 +180,8 @@ prod  running  pid=12844  uptime=2h13m
 The Route column always reads entry → exit; a `(host)` suffix marks the
 endpoint resolved on the SSH server side, so identical address strings on both
 sides stay distinguishable. When `name == host`, the header shows the name
-once; otherwise it shows `name → user@host`.
+once; otherwise it shows `name → [user@]host`. `-D` rows use `via host`
+instead of a suffix because SOCKS destinations are dynamic.
 
 All entries in a tunnel share one SSH process, so their state inherits the
 tunnel state. `active` means OpenSSH created the listener successfully; it is

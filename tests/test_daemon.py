@@ -15,6 +15,7 @@ def test_status_includes_stopped_and_disabled_forward_entries(tmp_path):
                 {
                     "name": "ready",
                     "host": "host",
+                    "user": "henry",
                     "proxy": [{"label": "proxy", "local": 1080}],
                 },
                 {
@@ -33,6 +34,7 @@ def test_status_includes_stopped_and_disabled_forward_entries(tmp_path):
     assert status["daemon"]["protocol_version"] == IPC_PROTOCOL_VERSION
     rows = {row["name"]: row for row in status["tunnels"]}
     assert rows["ready"]["state"] == "stopped"
+    assert rows["ready"]["user"] == "henry"
     assert rows["ready"]["forwards"][0]["label"] == "proxy"
     assert rows["ready"]["forwards"][0]["state"] == "stopped"
     assert rows["disabled"]["state"] == "disabled"

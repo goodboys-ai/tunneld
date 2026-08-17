@@ -52,9 +52,7 @@ def test_version_works_without_a_subcommand():
 def test_committed_schema_covers_current_models():
     path = Path(__file__).parents[1] / "tunneld.schema.json"
     committed = json.loads(path.read_text())
-    generated = config_schema()
-    assert committed["properties"].keys() == generated["properties"].keys()
-    assert committed["$defs"].keys() == generated["$defs"].keys()
+    assert committed == config_schema()
 
 
 def test_up_reloads_disk_before_starting(monkeypatch, tmp_path):
