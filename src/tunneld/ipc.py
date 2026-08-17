@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, Optional
 from . import state
 
 IPC_PROTOCOL_VERSION = 1
+IPC_TIMEOUT_SECONDS = 10.0
 MAX_LINE_BYTES = 1024 * 1024
 
 
@@ -63,7 +64,7 @@ def send_request(op: str, **args: Any) -> Dict[str, Any]:
     if not os.path.exists(sp):
         raise IPCError("daemon not running (try 'tunneld up')")
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(10.0)
+    sock.settimeout(IPC_TIMEOUT_SECONDS)
     try:
         sock.connect(sp)
     except OSError as exc:

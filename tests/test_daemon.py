@@ -1,11 +1,13 @@
+import socket
 import stat
 import threading
 import time
+from types import SimpleNamespace
 
 from tunneld import state
 from tunneld.config import parse_config
 from tunneld.daemon import Daemon
-from tunneld.ipc import IPC_PROTOCOL_VERSION
+from tunneld.ipc import IPC_PROTOCOL_VERSION, IPC_TIMEOUT_SECONDS
 
 
 def test_status_includes_stopped_and_disabled_forward_entries(tmp_path):
@@ -150,3 +152,67 @@ def test_control_socket_is_private_and_removed_on_shutdown(tmp_path, monkeypatch
     thread.join(timeout=2)
     assert not thread.is_alive()
     assert not socket_path.exists()
+
+
+def test_watch_config_breaks_debounce_on_shutdown(tmp_path, monkeypatch):
+    daemon = Daemon(str(tmp_path / "config.toml"))
+    daemon.config = parse_config({})
+    waits = iter([False, False, True])
+    monkeypatch.setattr(daemon._stop, "wait", lambda timeout: next(waits))
+    mtimes = iter([100, 200])
+    monkeypatch.setattr(
+        "tunneld.daemon.os.stat",
+        lambda path: SimpleNamespace(st_mtime_ns=next(mtimes)),
+    )
+    reload_calls = []
+    monkeypatch.setattr(daemon, "reload", lambda: reload_calls.append(1) or True)
+    daemon._watch_config()
+    assert reload_calls == []
+
+
+def test_serve_sets_timeout_and_bounds_connections(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    state.ensure_runtime_dir()
+    daemon = Daemon(str(tmp_path / "config.toml"))
+    handled = []
+    release = threading.Event()
+
+    def fake_handler(conn, dispatch):
+        handled.append(conn)
+        release.wait(timeout=3)
+
+    monkeypatch.setattr("tunneld.daemon.handle_connection", fake_handler)
+    thread = threading.Thread(target=daemon._serve)
+    thread.start()
+    sp = state.socket_path()
+    for _ in range(50):
+        if sp.exists():
+            break
+        time.sleep(0.02)
+    assert sp.exists()
+
+    clients = []
+    try:
+        for index in range(32):
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.connect(str(sp))
+            clients.append(client)
+            for _ in range(100):
+                if len(handled) >= index + 1:
+                    break
+                time.sleep(0.01)
+        assert len(handled) == 32
+        for conn in handled:
+            assert conn.gettimeout() == IPC_TIMEOUT_SECONDS
+        extra = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        extra.settimeout(2)
+        extra.connect(str(sp))
+        assert extra.recv(1) == b""
+        extra.close()
+    finally:
+        release.set()
+        for client in clients:
+            client.close()
+        daemon._stop.set()
+        thread.join(timeout=3)
+        assert not thread.is_alive()

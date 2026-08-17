@@ -6,18 +6,20 @@ import os
 import signal
 import socket
 import threading
-import time
 from typing import Dict, Optional
 
 from . import state
 from .command import build_command, build_forward_specs
 from .config import AppConfig, ConfigError, TunnelConfig, load_config
-from .ipc import IPC_PROTOCOL_VERSION, handle_connection
+from .ipc import IPC_PROTOCOL_VERSION, IPC_TIMEOUT_SECONDS, handle_connection
 from .supervisor import Supervisor
 
 
 def _safe(name: str) -> str:
     return "".join(c if c.isalnum() or c in "-_." else "_" for c in name)
+
+
+IPC_MAX_CONNECTIONS = 32
 
 
 class Daemon:
@@ -32,6 +34,7 @@ class Daemon:
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._op_lock = threading.RLock()
+        self._conn_slots = threading.BoundedSemaphore(IPC_MAX_CONNECTIONS)
 
     def load(self) -> bool:
         """Load the config while preserving the last valid configuration."""
@@ -254,9 +257,9 @@ class Daemon:
             if mtime == last:
                 continue
             last = mtime
-            time.sleep(0.5)
-            if not self._stop.is_set():
-                self.reload()
+            if self._stop.wait(0.5):
+                break
+            self.reload()
 
     def _serve(self) -> None:
         sp = str(state.socket_path())
@@ -279,14 +282,27 @@ class Daemon:
                 continue
             except OSError:
                 break
+            conn.settimeout(IPC_TIMEOUT_SECONDS)
+            if not self._conn_slots.acquire(blocking=False):
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                continue
             threading.Thread(
-                target=handle_connection, args=(conn, self.dispatch), daemon=True
+                target=self._handle_conn, args=(conn,), daemon=True
             ).start()
         server.close()
         try:
             os.unlink(sp)
         except OSError:
             pass
+
+    def _handle_conn(self, conn: socket.socket) -> None:
+        try:
+            handle_connection(conn, self.dispatch)
+        finally:
+            self._conn_slots.release()
 
     def run(self) -> None:
         """Run the foreground daemon until shutdown or a termination signal."""

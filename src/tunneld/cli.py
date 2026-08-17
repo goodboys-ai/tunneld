@@ -92,21 +92,38 @@ def _ensure_daemon(ctx: typer.Context) -> None:
         _stop_incompatible_daemon()
 
     daemonize.spawn_daemon(str(path))
-    for _ in range(50):
-        time.sleep(0.1)
+    deadline = time.monotonic() + 5.0
+    while True:
         try:
             data = send_request("status")
         except IPCError:
-            continue
-        if _daemon_compatible(data):
+            data = None
+        if data is not None and _daemon_compatible(data):
             return
-        raise RuntimeError(_incompatible_daemon_message())
+        if data is not None:
+            raise RuntimeError(_incompatible_daemon_message())
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
     raise RuntimeError("daemon did not come up; check " + str(state.daemon_log_path()))
 
 
+def _validate_up_names(config, names: List[str]) -> None:
+    """Reject unknown or disabled tunnel names before touching the daemon."""
+    by_name = {tunnel.name: tunnel for tunnel in config.tunnels}
+    for name in names:
+        tunnel = by_name.get(name)
+        if tunnel is None:
+            ui.error(f"unknown tunnel {name!r}")
+            raise typer.Exit(1)
+        if not tunnel.enabled:
+            ui.error(f"tunnel {name!r} is disabled in the config")
+            raise typer.Exit(1)
+
+
 def _wait_for_up(names: Optional[List[str]], seconds: int) -> None:
-    deadline = time.time() + seconds
-    while time.time() < deadline:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
         try:
             data = send_request("status")
         except IPCError:
@@ -139,10 +156,12 @@ def up(
 ):
     """Start tunnels (launching the daemon if needed)."""
     try:
-        load_config(_cfg(ctx))
+        config = load_config(_cfg(ctx))
     except (OSError, ConfigError) as exc:
         ui.error(str(exc))
         raise typer.Exit(1)
+    if names:
+        _validate_up_names(config, names)
     try:
         _ensure_daemon(ctx)
         # Always reread disk so up converges even when daemon.watch is false.

@@ -164,3 +164,62 @@ def test_down_rejects_conflicting_daemon_options():
     result = runner.invoke(app, ["down", "--kill-daemon", "--keep-daemon"])
     assert result.exit_code == 2
     assert "cannot be used together" in result.output
+
+
+def test_ensure_daemon_skips_spawn_when_daemon_running(monkeypatch):
+    monkeypatch.setattr(cli, "send_request", lambda op, **args: _compatible_status())
+    spawned = []
+    monkeypatch.setattr(cli.daemonize, "spawn_daemon", spawned.append)
+    context = SimpleNamespace(obj={"config": Path("/tmp/config.toml")})
+    cli._ensure_daemon(context)
+    assert spawned == []
+
+
+def test_up_validates_names_before_contacting_daemon(monkeypatch, tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[[tunnels]]\nname = "prod"\nhost = "p"\n'
+        "forwards = [{ local = 15432, remote = 5432 }]\n"
+        '[[tunnels]]\nname = "off"\nhost = "o"\nenabled = false\n'
+        "forwards = [{ local = 15433, remote = 5433 }]\n"
+    )
+    calls = []
+    monkeypatch.setattr(cli, "_ensure_daemon", lambda ctx: None)
+    monkeypatch.setattr(
+        cli, "send_request", lambda op, **args: calls.append((op, args)) or {}
+    )
+
+    result = runner.invoke(app, ["--config", str(path), "up", "unknown"])
+    assert result.exit_code == 1
+    assert "unknown tunnel 'unknown'" in result.output
+    assert calls == []
+
+    result = runner.invoke(app, ["--config", str(path), "up", "off"])
+    assert result.exit_code == 1
+    assert "tunnel 'off' is disabled in the config" in result.output
+    assert calls == []
+
+    result = runner.invoke(app, ["--config", str(path), "up", "prod"])
+    assert result.exit_code == 0, result.output
+    assert calls == [("reload", {}), ("start", {"name": "prod"})]
+
+
+def test_wait_for_up_uses_monotonic_deadline(monkeypatch):
+    clock = iter([0.0, 0.0, 100.0])
+    monkeypatch.setattr(cli.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(cli.ui, "warn", lambda msg: None)
+    calls = []
+
+    def fake_status(op, **args):
+        calls.append(op)
+        return {
+            "daemon": {"protocol_version": IPC_PROTOCOL_VERSION},
+            "tunnels": [
+                {"name": "t", "host": "h", "state": "starting", "enabled": True}
+            ],
+        }
+
+    monkeypatch.setattr(cli, "send_request", fake_status)
+    cli._wait_for_up(["t"], 5)
+    assert len(calls) == 1
