@@ -291,7 +291,7 @@ uv run pyright
 ~~~
 
 Pre-commit runs Ruff lint/format, Pyright, and codespell. CI runs the same
-checks plus the coverage gate on Python 3.9, 3.11, and 3.12.
+checks plus the coverage gate on Python 3.9, 3.11, 3.12, 3.13, and 3.14.
 
 ## License
 
