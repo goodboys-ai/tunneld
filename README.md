@@ -4,16 +4,17 @@ Config-driven SSH tunnel manager for Python 3.9+. Define local, dynamic
 proxy, and remote forwards in TOML; tunneld runs one system OpenSSH process per
 `[[tunnels]]` entry, keeps it connected, and reloads changes automatically.
 
-One `[[tunnels]]` entry means one SSH connection. Every entry in its
-`forwards`, `proxy`, and `remote_forwards` arrays shares that connection.
+Every running, enabled `[[tunnels]]` entry uses one SSH process. Every entry
+in its `forwards`, `proxy`, and `remote_forwards` arrays shares that connection.
 
 ## Features
 
 - Local (`-L`), dynamic SOCKS5 (`-D`), and remote (`-R`) forwarding.
 - Automatic reconnect with bounded exponential backoff.
 - Automatic, non-destructive config reload.
-- Strict Pydantic validation with unknown-key rejection and useful field paths.
-- Per-forward route rows with server-side markers, optional labels, listener conflict checks, and JSON Schema.
+- Strict Pydantic validation: unknown keys rejected with field paths, listener
+  conflicts detected.
+- Per-forward route rows with server-side markers and optional labels.
 - Uses system `ssh`, preserving `~/.ssh/config`, ssh-agent, ProxyJump, and known_hosts.
 - Ships a PEP 561 `py.typed` marker for type-checking library consumers.
 
@@ -27,35 +28,26 @@ Python 3.11+ uses `tomllib`; Python 3.9/3.10 use `tomli`.
 
 ## Install
 
-Requires Python 3.9+ and an OpenSSH client on PATH.
-
 ### PyPI (recommended)
 
 ~~~console
 uv tool install tunneld
-uv tool upgrade tunneld
 ~~~
 
 ### pipx
 
 ~~~console
 pipx install tunneld
-pipx upgrade tunneld
 ~~~
 
 ### pip
 
 ~~~console
 python -m pip install --user tunneld
-python -m pip install --user --upgrade tunneld
 ~~~
 
-### Pin a GitHub release
-
-~~~console
-uv tool install --force \
-  "tunneld @ git+https://github.com/goodboys-ai/tunneld@v0.3.1"
-~~~
+Update with the matching tool's upgrade command (`uv tool upgrade tunneld`,
+`pipx upgrade tunneld`, or `pip install --user --upgrade tunneld`).
 
 ## Quick start
 
@@ -136,9 +128,18 @@ proxy = [
 This creates two SSH processes. The `prod` command contains three `-L`
 arguments, one `-D`, and one `-R`.
 
-### Endpoint shorthand
+### Forwarding semantics
 
-An integer means `localhost:<port>` on the corresponding side:
+| Config array | OpenSSH | Listener | Target reached from |
+|---|---|---|---|
+| `forwards` | `-L` | local machine | SSH server side |
+| `proxy` | `-D` | local machine | dynamic through SSH |
+| `remote_forwards` | `-R` | SSH server | local machine side |
+
+`label` is optional. If present, it must be unique across all forwarding arrays
+within that tunnel. It affects status and errors, not the SSH command.
+
+An integer endpoint means `localhost:<port>` on the corresponding side:
 
 ~~~toml
 { local = 5432, remote = 5432 }
@@ -156,17 +157,6 @@ Ports must be in `1..65535`. IPv6 endpoints use `[address]:port`.
 Binding a local or proxy listener to `0.0.0.0` exposes it to other machines.
 A remote `0.0.0.0` listener also requires the SSH server to permit `GatewayPorts`.
 
-### Forward direction
-
-| Config array | OpenSSH | Listener | Target reached from |
-|---|---|---|---|
-| `forwards` | `-L` | local machine | SSH server side |
-| `proxy` | `-D` | local machine | dynamic through SSH |
-| `remote_forwards` | `-R` | SSH server | local machine side |
-
-`label` is optional. If present, it must be unique across all forwarding arrays
-within that tunnel. It affects status and errors, not the SSH command.
-
 ### Strict validation
 
 Pydantic rejects unknown keys, invalid endpoints, duplicate tunnel names,
@@ -175,8 +165,8 @@ tunnels without forwarding entries. Tunnel names must start with an ASCII letter
 or digit and may also contain `.`, `_`, and `-`. Disabled tunnels are excluded
 from listener-conflict checks. `keep_alive_count = 0` is accepted and preserves
 OpenSSH's no-termination behavior. `host` and `user` are passed directly to the
-system `ssh` argv; invalid aliases or names are diagnosed by OpenSSH and
-`tunneld doctor`, without shell interpretation.
+system `ssh` argv; connection or resolution errors are reported by OpenSSH.
+`tunneld doctor` checks the config, SSH availability, and `ssh -G` expansion.
 
 ~~~console
 tunneld check
@@ -190,9 +180,9 @@ tunneld schema --output tunneld.schema.json
 `status` groups rows by tunnel and displays every forwarding entry:
 
 ~~~text
-tunneld  pid=12844  config=~/.config/tunneld/tunneld.toml
+tunneld  pid=12844  config=/home/alice/.config/tunneld/tunneld.toml
 
-prod  running  pid=12844  uptime=2h13m
+prod  running  pid=12857  uptime=2h13m
 ┏━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
 ┃ Label    ┃ Type ┃ Route                                      ┃ State  ┃
 ┡━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
@@ -204,33 +194,31 @@ prod  running  pid=12844  uptime=2h13m
 
 The Route column always reads entry → exit; a `(host)` suffix marks the
 endpoint resolved on the SSH server side, so identical address strings on both
-sides stay distinguishable. When `name == host`, the header shows the name
-once; otherwise it shows `name → [user@]host`. `-D` rows use `via host`
-instead of a suffix because SOCKS destinations are dynamic.
-
-All entries in a tunnel share one SSH process, so their state inherits the
-tunnel state. `active` means OpenSSH created the listener successfully; it is
-not a destination-service health check.
+sides stay distinguishable. `-D` rows use `via host` because SOCKS
+destinations are dynamic. `active` means OpenSSH created the listener
+successfully; it is not a destination-service health check.
 
 ## Commands
 
 ~~~text
-tunneld up [NAMES...]             start enabled tunnels
-tunneld down [NAMES...]           stop named tunnels; with no names, stop daemon
-tunneld down --keep-daemon        stop all tunnels but keep the daemon
-tunneld down --kill-daemon        explicitly stop tunnels and daemon
-tunneld restart [NAMES...]        restart tunnels
-tunneld reload                    reload and converge immediately
-tunneld status                    show tunnel and forwarding-entry state
-tunneld list                      inspect config without the daemon
-tunneld check [--show-command]    strictly validate and normalize config
-tunneld logs NAME [--follow]      read one tunnel's SSH output
-tunneld init [--full]             write a config template
-tunneld edit                      open config in $EDITOR
-tunneld doctor                    check config, ssh, and host aliases
-tunneld schema [-o PATH]          emit JSON Schema
+tunneld up [NAMES...] [--wait N]   start enabled tunnels
+tunneld down [NAMES...]            stop named tunnels; with no names, stop daemon
+tunneld down --keep-daemon         stop all tunnels but keep the daemon
+tunneld down --kill-daemon         explicitly stop tunnels and daemon
+tunneld restart [NAMES...]         restart tunnels
+tunneld reload                     reload and converge immediately
+tunneld status                     show tunnel and forwarding-entry state
+tunneld list                       inspect config without the daemon
+tunneld check [--show-command]     strictly validate and normalize config
+tunneld logs NAME [-n N] [--follow]  read one tunnel's SSH output
+tunneld init [--full] [--force]    write a config template
+tunneld edit                       open config in $EDITOR
+tunneld doctor                     check config, ssh, and host aliases
+tunneld schema [-o PATH]           emit JSON Schema
 tunneld --version
 ~~~
+
+All commands accept a global `-c/--config PATH` option before the subcommand.
 
 ## Daemon behavior
 
@@ -238,23 +226,17 @@ tunneld --version
   incompatible IPC protocol after an upgrade.
 - Every SSH process uses `ExitOnForwardFailure=yes` and configured keepalives.
 - A dropped process reconnects using the configured delay range.
-- The watcher performs one `stat` at the configured interval and only parses
-  when mtime changes.
 - Invalid edits leave current tunnels running and appear as a config error.
 - `down NAME` stays stopped until `up NAME` or `restart NAME`; it leaves other
   tunnels and the daemon running. Plain `down` stops everything and exits the
   daemon; use `down --keep-daemon` to retain the watcher.
 - IPC requests and responses are capped at 1 MiB. The runtime directory is
   mode `0700` and the control socket is mode `0600`.
-- Per-tunnel logs are truncated in place at 10 MiB; the last 64 KiB is
-  preserved in `<name>.log.prev`, and `logs -f` continues across truncation.
-  The daemon log rotates into three generations when it exceeds the limit at
-  daemon startup.
-- Logs live under `$XDG_RUNTIME_DIR/tunneld/logs/`, falling back to
-  `~/.cache/tunneld/logs/`.
-- The PID file is informational and overwritten at startup; daemon liveness is
-  determined through IPC. Like any Unix process, `SIGKILL` can leave a stale
-  PID file, which does not prevent the next start.
+- Per-tunnel logs live under `$XDG_RUNTIME_DIR/tunneld/logs/` (falling back to
+  `~/.cache/tunneld/logs/`), truncated in place at 10 MiB with the last 64 KiB
+  kept in `<name>.log.prev`. The daemon log rotates into three generations when
+  `tunneld up` spawns the detached daemon.
+- The PID file is informational; daemon liveness is determined through IPC.
 
 ## systemd user service
 
@@ -278,20 +260,24 @@ systemctl --user daemon-reload
 systemctl --user enable --now tunneld
 ~~~
 
+With `Restart=always`, systemd restarts the daemon after a plain `tunneld down`;
+use `systemctl --user stop tunneld` or `tunneld down --keep-daemon` instead.
+
 ## Development
 
 ~~~console
 git clone https://github.com/goodboys-ai/tunneld
 cd tunneld
 uv sync --extra dev
-pre-commit install
-uv run pytest          # coverage report included; CI enforces >=70%
+uv run pre-commit install
+uv run pytest          # coverage report included; CI gates on it
 uv run ruff check src tests
 uv run pyright
 ~~~
 
-Pre-commit runs Ruff lint/format, Pyright, and codespell. CI runs the same
-checks plus the coverage gate on Python 3.9, 3.11, 3.12, 3.13, and 3.14.
+Pre-commit runs Ruff, Pyright, and codespell. CI runs Ruff, Pyright, and
+coverage-gated tests across Python 3.9-3.14 (see
+[.github/workflows/ci.yml](.github/workflows/ci.yml)).
 
 ## License
 
