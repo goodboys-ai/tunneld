@@ -179,7 +179,7 @@ def test_serve_sets_timeout_and_bounds_connections(tmp_path, monkeypatch):
 
     def fake_handler(conn, dispatch):
         handled.append(conn)
-        release.wait(timeout=3)
+        release.wait()
 
     monkeypatch.setattr("tunneld.daemon.handle_connection", fake_handler)
     thread = threading.Thread(target=daemon._serve)
@@ -211,8 +211,73 @@ def test_serve_sets_timeout_and_bounds_connections(tmp_path, monkeypatch):
         extra.close()
     finally:
         release.set()
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        probe.settimeout(2)
+        probe.connect(str(sp))
+        for _ in range(100):
+            if len(handled) >= 33:
+                break
+            time.sleep(0.01)
+        assert len(handled) == 33
+        probe.close()
         for client in clients:
             client.close()
         daemon._stop.set()
         thread.join(timeout=3)
         assert not thread.is_alive()
+
+
+def test_serve_survives_worker_thread_start_failure(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    state.ensure_runtime_dir()
+    daemon = Daemon(str(tmp_path / "config.toml"))
+    handled = []
+    release = threading.Event()
+
+    def fake_handler(conn, dispatch):
+        handled.append(conn)
+        release.wait()
+
+    monkeypatch.setattr("tunneld.daemon.handle_connection", fake_handler)
+    real_thread = threading.Thread
+    attempts = {"count": 0}
+
+    class FlakyThread:
+        def __init__(self, *args, **kwargs):
+            self._real = real_thread(*args, **kwargs)
+            attempts["count"] += 1
+            self._should_fail = attempts["count"] == 1
+
+        def start(self):
+            if self._should_fail:
+                raise RuntimeError("can't start new thread")
+            self._real.start()
+
+    monkeypatch.setattr("tunneld.daemon.threading.Thread", FlakyThread)
+    serve_thread = real_thread(target=daemon._serve)
+    serve_thread.start()
+    sp = state.socket_path()
+    for _ in range(50):
+        if sp.exists():
+            break
+        time.sleep(0.02)
+
+    first = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    first.settimeout(2)
+    first.connect(str(sp))
+    assert first.recv(1) == b""
+    first.close()
+
+    second = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    second.connect(str(sp))
+    for _ in range(200):
+        if len(handled) >= 1:
+            break
+        time.sleep(0.01)
+    assert len(handled) == 1
+
+    release.set()
+    second.close()
+    daemon._stop.set()
+    serve_thread.join(timeout=3)
+    assert not serve_thread.is_alive()

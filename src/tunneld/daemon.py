@@ -282,16 +282,32 @@ class Daemon:
                 continue
             except OSError:
                 break
-            conn.settimeout(IPC_TIMEOUT_SECONDS)
+            try:
+                conn.settimeout(IPC_TIMEOUT_SECONDS)
+            except OSError:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                continue
             if not self._conn_slots.acquire(blocking=False):
                 try:
                     conn.close()
                 except OSError:
                     pass
                 continue
-            threading.Thread(
-                target=self._handle_conn, args=(conn,), daemon=True
-            ).start()
+            try:
+                thread = threading.Thread(
+                    target=self._handle_conn, args=(conn,), daemon=True
+                )
+                thread.start()
+            except Exception:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                self._conn_slots.release()
+                continue
         server.close()
         try:
             os.unlink(sp)

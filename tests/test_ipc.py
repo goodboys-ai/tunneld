@@ -82,3 +82,18 @@ def test_concurrent_ipc_connections_remain_independent():
         responses = list(executor.map(_round_trip, range(32)))
     assert [response["data"]["index"] for response in responses] == list(range(32))
     assert all(response["ok"] for response in responses)
+
+
+def test_handle_connection_responds_and_closes_on_io_timeout():
+    server, client = socket.socketpair()
+    server.settimeout(0.1)
+    thread = threading.Thread(
+        target=handle_connection, args=(server, lambda op, args: {})
+    )
+    thread.start()
+    client.settimeout(2)
+    response = json.loads(_recv_line(client))
+    thread.join(timeout=2)
+    client.close()
+    assert not thread.is_alive()
+    assert response == {"ok": False, "error": "timed out"}
