@@ -181,3 +181,46 @@ def test_pump_truncates_when_threshold_is_reached(tmp_path, monkeypatch):
         supervisor._pump(iter(lines), logf)
     assert (tmp_path / "t.log.prev").read_bytes() == b"".join(lines)
     assert "log truncated" in log.read_text()
+
+
+def test_pump_accounts_for_existing_log_size(tmp_path, monkeypatch):
+    monkeypatch.setattr(supervisor_module, "LOG_LIMIT_BYTES", 200)
+    log = tmp_path / "t.log"
+    log.write_bytes(b"o" * 180)
+    tunnel = TunnelConfig(
+        name="t",
+        host="h",
+        forwards=[LocalForwardConfig(local=15432, remote=5432)],
+    )
+    supervisor = Supervisor(tunnel, build_command(tunnel, DefaultsConfig()), str(log))
+    with open(log, "a+b") as logf:
+        supervisor._pump(iter([b"x" * 60]), logf)
+    assert "log truncated" in log.read_text()
+    assert (tmp_path / "t.log.prev").read_bytes() == b"o" * 180 + b"x" * 60
+
+
+def test_spawn_failure_writes_are_size_limited(tmp_path, monkeypatch):
+    monkeypatch.setattr(supervisor_module, "LOG_LIMIT_BYTES", 200)
+    log = tmp_path / "t.log"
+    log.write_bytes(b"p" * 180)
+    tunnel = TunnelConfig(
+        name="t",
+        host="h",
+        forwards=[LocalForwardConfig(local=15432, remote=5432)],
+    )
+
+    def fail(*args, **kwargs):
+        raise FileNotFoundError("ssh missing")
+
+    monkeypatch.setattr("tunneld.supervisor.subprocess.Popen", fail)
+    supervisor = Supervisor(
+        tunnel,
+        build_command(tunnel, DefaultsConfig()),
+        str(log),
+        reconnect_initial_delay=10,
+        reconnect_max_delay=10,
+    )
+    supervisor.start()
+    assert "log truncated" in log.read_text()
+    assert b"failed to start ssh" in (tmp_path / "t.log.prev").read_bytes()
+    supervisor.stop()

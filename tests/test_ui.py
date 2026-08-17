@@ -145,15 +145,22 @@ def test_markup_in_daemon_fields_is_escaped():
     assert "\x1b[1;31mEVIL" not in rendered
 
 
-def test_seek_start_if_shrunk_detects_truncation(tmp_path):
+def test_rewind_check_detects_truncation_even_after_regrow(tmp_path):
     path = tmp_path / "t.log"
-    path.write_bytes(b"a" * 100)
+    path.write_bytes(b"old header\n" + b"a" * 200)
     with open(path, "rb") as fh:
-        fh.read(50)
+        fh.seek(0)
+        first_line = fh.readline()
+        fh.seek(0, 2)
         with open(path, "wb") as writer:
-            writer.write(b"b" * 10)
-        assert ui._seek_start_if_shrunk(fh) is True
+            writer.write(b"[log truncated]\n" + b"b" * 300)
+        rewind, updated = ui._rewind_check(fh, first_line)
+        assert rewind is True
         assert fh.tell() == 0
+        assert updated == b"[log truncated]\n"
     with open(path, "rb") as fh:
-        fh.read(10)
-        assert ui._seek_start_if_shrunk(fh) is False
+        fh.seek(0)
+        first_line = fh.readline()
+        fh.seek(0, 2)
+        rewind, _ = ui._rewind_check(fh, first_line)
+        assert rewind is False

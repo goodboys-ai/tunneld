@@ -83,6 +83,7 @@ class Supervisor:
         self._stop = threading.Event()
         self._watch_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+        self._log_lock = threading.Lock()
         self._backoff = self.reconnect_initial_delay
 
     def start(self) -> None:
@@ -184,7 +185,7 @@ class Supervisor:
                 except OSError:
                     pass
         try:
-            logf.write((message + "\n").encode("utf-8", errors="replace"))
+            self._append_log(logf, (message + "\n").encode("utf-8", errors="replace"))
         finally:
             logf.close()
         self.proc = None
@@ -221,16 +222,22 @@ class Supervisor:
         if self.proc.poll() is None:
             self.state = "running"
 
+    def _append_log(self, logf, data: bytes) -> None:
+        """Append log data and truncate in place once the limit is crossed."""
+        with self._log_lock:
+            logf.write(data)
+            logf.flush()
+            try:
+                size = os.fstat(logf.fileno()).st_size
+            except OSError:
+                return
+            if size >= LOG_LIMIT_BYTES:
+                _truncate_log(logf, self.log_path + ".prev")
+
     def _pump(self, stream, logf) -> None:
-        written = 0
         try:
             for line in stream:
-                logf.write(line)
-                logf.flush()
-                written += len(line)
-                if written >= LOG_LIMIT_BYTES:
-                    written = 0
-                    _truncate_log(logf, self.log_path + ".prev")
+                self._append_log(logf, line)
         finally:
             try:
                 stream.close()

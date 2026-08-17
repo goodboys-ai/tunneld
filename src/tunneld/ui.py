@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -163,16 +162,16 @@ def render_check(config, show_command: bool = False) -> None:
             console.print(f"  [dim]{command}[/dim]")
 
 
-def _seek_start_if_shrunk(fh) -> bool:
-    """Rewind to the start when an open log has been truncated in place."""
-    try:
-        size = os.fstat(fh.fileno()).st_size
-    except OSError:
-        return False
-    if size < fh.tell():
-        fh.seek(0)
-        return True
-    return False
+def _rewind_check(fh, first_line: bytes):
+    """Rewind when the log's first line changed (in-place truncation)."""
+    position = fh.tell()
+    fh.seek(0)
+    head = fh.readline()
+    if head == first_line:
+        fh.seek(position)
+        return False, first_line
+    fh.seek(0)
+    return True, head
 
 
 def tail(path: Path, lines: int, follow: bool) -> None:
@@ -190,11 +189,15 @@ def tail(path: Path, lines: int, follow: bool) -> None:
         if not follow:
             return
         fh.seek(0, 2)
+        fh.seek(0)
+        first_line = fh.readline()
+        fh.seek(0, 2)
         while True:
             line = fh.readline()
             if line:
                 console.print(line.decode(errors="replace"), end="")
             else:
-                if _seek_start_if_shrunk(fh):
+                rewind, first_line = _rewind_check(fh, first_line)
+                if rewind:
                     continue
                 time.sleep(0.2)
