@@ -1,142 +1,345 @@
-"""Configuration model and loader for tunneld."""
+"""Strict Pydantic models and TOML loader for tunneld."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import List, Optional
+import re
+from pathlib import Path
+from typing import Annotated, Any, Dict, Iterator, List, Optional, Tuple, Union
+
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 try:  # Python 3.11+
     import tomllib as _toml
 except ImportError:  # Python 3.9 / 3.10
-    import tomlkit as _toml  # type: ignore
-
-FORWARD_MODES = ("local", "socks", "remote")
+    import tomli as _toml  # type: ignore
 
 
 class ConfigError(ValueError):
-    """Raised when the configuration is invalid."""
+    """A user-facing TOML or schema validation error."""
 
 
-@dataclass
-class Forward:
-    """A single -L / -D / -R forward on a tunnel."""
+def _endpoint_parts(value: Union[int, str]) -> Tuple[Optional[str], int]:
+    if isinstance(value, int):
+        return None, value
 
-    mode: str = "local"
-    local: str = ""
-    remote: Optional[str] = None
+    if value.isdigit():
+        raise ValueError("use an integer for a bare port, for example local = 5432")
 
-    def validate(self, tunnel_name: str) -> None:
-        if self.mode not in FORWARD_MODES:
-            raise ConfigError(
-                f"{tunnel_name}: unknown forward mode {self.mode!r} "
-                f"(use one of {', '.join(FORWARD_MODES)})"
-            )
-        if not self.local:
-            raise ConfigError(f"{tunnel_name}: forward 'local' is required")
-        if self.mode in ("local", "remote") and not self.remote:
-            raise ConfigError(f"{tunnel_name}: {self.mode} forward needs 'remote'")
+    if value.startswith("["):
+        match = re.fullmatch(r"\[([^]]+)]:(\d+)", value)
+        if not match:
+            raise ValueError("IPv6 endpoints must use [address]:port")
+        host, port_text = match.groups()
+    else:
+        host, separator, port_text = value.rpartition(":")
+        if not separator or not host or not port_text:
+            raise ValueError("endpoint must be a port integer or host:port string")
+        if ":" in host:
+            raise ValueError("IPv6 endpoints must use [address]:port")
 
-
-@dataclass
-class Tunnel:
-    """One [[tunnels]] block == one target host == one ssh connection."""
-
-    name: str
-    host: str
-    user: Optional[str] = None
-    port: Optional[int] = None
-    identity: Optional[str] = None
-    keep_alive: Optional[int] = None
-    enabled: bool = True
-    ssh_options: List[str] = field(default_factory=list)
-    forwards: List[Forward] = field(default_factory=list)
-
-    def validate(self) -> None:
-        if not self.name:
-            raise ConfigError("tunnel 'name' is required")
-        if not self.host:
-            raise ConfigError(f"{self.name}: 'host' is required")
-        if not self.forwards:
-            raise ConfigError(
-                f"{self.name}: at least one [[tunnels.forwards]] is required"
-            )
-        for fwd in self.forwards:
-            fwd.validate(self.name)
+    port = int(port_text) if port_text.isdigit() else 0
+    if not 1 <= port <= 65535:
+        raise ValueError("endpoint port must be between 1 and 65535")
+    return host, port
 
 
-@dataclass
-class Config:
-    """Top-level config ([defaults] + [[tunnels]])."""
-
-    keep_alive: int = 30
-    watch: bool = True
-    tunnels: List[Tunnel] = field(default_factory=list)
-    path: str = ""
-
-    def validate(self) -> None:
-        names = set()
-        for t in self.tunnels:
-            if t.name in names:
-                raise ConfigError(f"duplicate tunnel name {t.name!r}")
-            names.add(t.name)
-            t.validate()
+def _validate_endpoint(value: Union[int, str]) -> Union[int, str]:
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            raise ValueError("endpoint must not be empty")
+    _endpoint_parts(value)
+    return value
 
 
-def _get_str(table, key: str, default: str = "") -> str:
-    value = table.get(key, default)
-    return str(value).strip() if value is not None else default
+Port = Annotated[StrictInt, Field(ge=1, le=65535)]
+Endpoint = Annotated[Union[Port, StrictStr], AfterValidator(_validate_endpoint)]
+NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
+PositiveSeconds = Union[
+    Annotated[StrictInt, Field(gt=0)],
+    Annotated[float, Field(strict=True, gt=0)],
+]
+Name = Annotated[
+    StrictStr, Field(min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+]
+NonEmptyString = Annotated[StrictStr, Field(min_length=1)]
 
 
-def _parse_forward(table, tunnel_name: str) -> Forward:
-    mode = str(table.get("mode", "local")).strip().lower()
-    local = _get_str(table, "local")
-    remote = table.get("remote")
-    remote = str(remote).strip() if remote is not None else None
-    fwd = Forward(mode=mode, local=local, remote=remote)
-    fwd.validate(tunnel_name)
-    return fwd
-
-
-def _parse_tunnel(table) -> Tunnel:
-    name = _get_str(table, "name")
-    host = _get_str(table, "host")
-    user = _get_str(table, "user") or None
-    port = table.get("port")
-    port = int(port) if port is not None else None
-    identity = _get_str(table, "identity") or None
-    keep_alive = table.get("keep_alive")
-    keep_alive = int(keep_alive) if keep_alive is not None else None
-    enabled = bool(table.get("enabled", True))
-    ssh_options = [str(o) for o in table.get("ssh_options", [])]
-    forwards = [_parse_forward(f, name) for f in table.get("forwards", [])]
-    tunnel = Tunnel(
-        name=name,
-        host=host,
-        user=user,
-        port=port,
-        identity=identity,
-        keep_alive=keep_alive,
-        enabled=enabled,
-        ssh_options=ssh_options,
-        forwards=forwards,
+class StrictModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        str_strip_whitespace=True,
+        validate_default=True,
     )
-    tunnel.validate()
-    return tunnel
 
 
-def parse(doc) -> Config:
-    defaults = doc.get("defaults", {})
-    keep_alive = int(defaults.get("keep_alive", 30))
-    watch = bool(defaults.get("watch", True))
-    tunnels = [_parse_tunnel(t) for t in doc.get("tunnels", [])]
-    cfg = Config(keep_alive=keep_alive, watch=watch, tunnels=tunnels)
-    cfg.validate()
-    return cfg
+class DaemonConfig(StrictModel):
+    watch: StrictBool = True
+    watch_interval: PositiveSeconds = 1.5
+    reconnect_initial_delay: PositiveSeconds = 1.0
+    reconnect_max_delay: PositiveSeconds = 30.0
+
+    @model_validator(mode="after")
+    def validate_delays(self) -> "DaemonConfig":
+        if self.reconnect_initial_delay > self.reconnect_max_delay:
+            raise ValueError(
+                "reconnect_initial_delay must not exceed reconnect_max_delay"
+            )
+        return self
 
 
-def load_config(path) -> Config:
-    with open(path, "rb") as fh:
-        data = fh.read()
-    cfg = parse(_toml.loads(data.decode("utf-8")))
-    cfg.path = str(path)
-    return cfg
+class DefaultsConfig(StrictModel):
+    keep_alive: NonNegativeInt = 30
+    keep_alive_count: NonNegativeInt = 3
+
+
+class LabeledForward(StrictModel):
+    label: Optional[NonEmptyString] = None
+
+
+class LocalForwardConfig(LabeledForward):
+    local: Endpoint
+    remote: Endpoint
+
+
+class SocksForwardConfig(LabeledForward):
+    local: Endpoint
+
+
+class RemoteForwardConfig(LabeledForward):
+    local: Endpoint
+    remote: Endpoint
+
+
+_MANAGED_SSH_OPTIONS = {
+    "controlmaster",
+    "controlpath",
+    "controlpersist",
+    "dynamicforward",
+    "exitonforwardfailure",
+    "forkafterauthentication",
+    "localforward",
+    "remoteforward",
+    "requesttty",
+    "serveralivecountmax",
+    "serveraliveinterval",
+    "sessiontype",
+}
+
+
+class TunnelConfig(StrictModel):
+    name: Name
+    host: NonEmptyString
+    enabled: StrictBool = True
+
+    user: Optional[NonEmptyString] = None
+    port: Optional[Port] = None
+    identity: Optional[NonEmptyString] = None
+    keep_alive: Optional[NonNegativeInt] = None
+    keep_alive_count: Optional[NonNegativeInt] = None
+    ssh_options: List[NonEmptyString] = Field(default_factory=list)
+
+    forwards: List[LocalForwardConfig] = Field(default_factory=list)
+    socks: List[SocksForwardConfig] = Field(default_factory=list)
+    remote_forwards: List[RemoteForwardConfig] = Field(default_factory=list)
+
+    @field_validator("ssh_options")
+    @classmethod
+    def validate_ssh_options(cls, options: List[str]) -> List[str]:
+        for option in options:
+            if "=" not in option:
+                raise ValueError(f"ssh option {option!r} must use Key=value syntax")
+            key = option.split("=", 1)[0].strip().lower()
+            if key in _MANAGED_SSH_OPTIONS:
+                raise ValueError(
+                    f"ssh option {key!r} is managed by tunneld and cannot be overridden"
+                )
+        return options
+
+    @model_validator(mode="after")
+    def validate_forward_entries(self) -> "TunnelConfig":
+        entries = list(self.iter_forward_entries())
+        if not entries:
+            raise ValueError(
+                "at least one forwards, socks, or remote_forwards entry is required"
+            )
+
+        labels: Dict[str, str] = {}
+        for kind, entry in entries:
+            if entry.label is None:
+                continue
+            if entry.label in labels:
+                raise ValueError(
+                    f"duplicate label {entry.label!r} in {kind} and "
+                    f"{labels[entry.label]}"
+                )
+            labels[entry.label] = kind
+
+        remote_listeners: List[Tuple[str, Endpoint]] = []
+        for entry in self.remote_forwards:
+            for previous_label, previous in remote_listeners:
+                if _listeners_conflict(previous, entry.remote):
+                    label = entry.label or "unlabeled remote forward"
+                    raise ValueError(
+                        f"remote listener for {label!r} conflicts with "
+                        f"{previous_label!r}"
+                    )
+            remote_listeners.append(
+                (entry.label or "unlabeled remote forward", entry.remote)
+            )
+        return self
+
+    def iter_forward_entries(self) -> Iterator[Tuple[str, LabeledForward]]:
+        for entry in self.forwards:
+            yield "forwards", entry
+        for entry in self.socks:
+            yield "socks", entry
+        for entry in self.remote_forwards:
+            yield "remote_forwards", entry
+
+    def effective_keep_alive(self, defaults: DefaultsConfig) -> int:
+        return self.keep_alive if self.keep_alive is not None else defaults.keep_alive
+
+    def effective_keep_alive_count(self, defaults: DefaultsConfig) -> int:
+        return (
+            self.keep_alive_count
+            if self.keep_alive_count is not None
+            else defaults.keep_alive_count
+        )
+
+
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_WILDCARD_HOSTS = {"*", "0.0.0.0", "::"}
+
+
+def _listener_identity(endpoint: Endpoint) -> Tuple[str, int]:
+    host, port = _endpoint_parts(endpoint)
+    if host is None:
+        return "loopback", port
+    normalized = host.strip("[]").lower()
+    if normalized in _LOOPBACK_HOSTS:
+        return "loopback", port
+    if normalized in _WILDCARD_HOSTS:
+        return "wildcard", port
+    return normalized, port
+
+
+def _listeners_conflict(left: Endpoint, right: Endpoint) -> bool:
+    left_host, left_port = _listener_identity(left)
+    right_host, right_port = _listener_identity(right)
+    if left_port != right_port:
+        return False
+    if "wildcard" in (left_host, right_host):
+        return True
+    return left_host == right_host
+
+
+class AppConfig(StrictModel):
+    daemon: DaemonConfig = Field(default_factory=DaemonConfig)
+    defaults: DefaultsConfig = Field(default_factory=DefaultsConfig)
+    tunnels: List[TunnelConfig] = Field(default_factory=list)
+
+    _path: str = PrivateAttr(default="")
+
+    @property
+    def path(self) -> str:
+        return self._path
+
+    @model_validator(mode="after")
+    def validate_tunnels(self) -> "AppConfig":
+        names: Dict[str, int] = {}
+        local_listeners: List[Tuple[str, str, Endpoint]] = []
+        remote_listeners: List[Tuple[str, str, Endpoint]] = []
+
+        for index, tunnel in enumerate(self.tunnels):
+            if tunnel.name in names:
+                raise ValueError(
+                    f"duplicate tunnel name {tunnel.name!r} at indexes "
+                    f"{names[tunnel.name]} and {index}"
+                )
+            names[tunnel.name] = index
+            if not tunnel.enabled:
+                continue
+
+            for entry in [*tunnel.forwards, *tunnel.socks]:
+                label = entry.label or "unlabeled forward"
+                for previous_tunnel, previous_label, previous in local_listeners:
+                    if _listeners_conflict(previous, entry.local):
+                        raise ValueError(
+                            f"local listener for {tunnel.name}/{label} conflicts with "
+                            f"{previous_tunnel}/{previous_label}"
+                        )
+                local_listeners.append((tunnel.name, label, entry.local))
+
+            for entry in tunnel.remote_forwards:
+                label = entry.label or "unlabeled remote forward"
+                for previous_host, previous_label, previous in remote_listeners:
+                    if previous_host == tunnel.host and _listeners_conflict(
+                        previous, entry.remote
+                    ):
+                        raise ValueError(
+                            f"remote listener for {tunnel.name}/{label} conflicts with "
+                            f"{previous_label} on host {tunnel.host!r}"
+                        )
+                remote_listeners.append(
+                    (tunnel.host, f"{tunnel.name}/{label}", entry.remote)
+                )
+        return self
+
+
+def _format_location(location: Tuple[Any, ...]) -> str:
+    result = ""
+    for part in location:
+        if isinstance(part, int):
+            result += f"[{part}]"
+        else:
+            result += ("." if result else "") + str(part)
+    return result or "config"
+
+
+def _format_validation_error(error: ValidationError) -> str:
+    lines = ["invalid configuration:"]
+    for item in error.errors(include_url=False):
+        location = _format_location(tuple(item["loc"]))
+        lines.append(f"  {location}: {item['msg']}")
+    return "\n".join(lines)
+
+
+def parse_config(document: Dict[str, Any], path: str = "") -> AppConfig:
+    try:
+        config = AppConfig.model_validate(document)
+    except ValidationError as exc:
+        raise ConfigError(_format_validation_error(exc)) from None
+    config._path = path
+    return config
+
+
+def load_config(path: Union[str, Path]) -> AppConfig:
+    path = Path(path)
+    try:
+        document = _toml.loads(path.read_text(encoding="utf-8-sig"))
+    except _toml.TOMLDecodeError as exc:
+        raise ConfigError(f"invalid TOML: {exc}") from None
+    return parse_config(document, str(path))
+
+
+def config_schema() -> Dict[str, Any]:
+    schema = AppConfig.model_json_schema()
+    schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+    schema["$id"] = (
+        "https://raw.githubusercontent.com/goodboys-ai/tunneld/main/tunneld.schema.json"
+    )
+    return schema

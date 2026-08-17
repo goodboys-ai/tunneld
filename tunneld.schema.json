@@ -1,0 +1,355 @@
+{
+  "$defs": {
+    "DaemonConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "reconnect_initial_delay": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            }
+          ],
+          "default": 1.0,
+          "title": "Reconnect Initial Delay"
+        },
+        "reconnect_max_delay": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            }
+          ],
+          "default": 30.0,
+          "title": "Reconnect Max Delay"
+        },
+        "watch": {
+          "default": true,
+          "title": "Watch",
+          "type": "boolean"
+        },
+        "watch_interval": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            }
+          ],
+          "default": 1.5,
+          "title": "Watch Interval"
+        }
+      },
+      "title": "DaemonConfig",
+      "type": "object"
+    },
+    "DefaultsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "keep_alive": {
+          "default": 30,
+          "minimum": 0,
+          "title": "Keep Alive",
+          "type": "integer"
+        },
+        "keep_alive_count": {
+          "default": 3,
+          "minimum": 0,
+          "title": "Keep Alive Count",
+          "type": "integer"
+        }
+      },
+      "title": "DefaultsConfig",
+      "type": "object"
+    },
+    "LocalForwardConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "local": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Local"
+        },
+        "remote": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Remote"
+        }
+      },
+      "required": [
+        "local",
+        "remote"
+      ],
+      "title": "LocalForwardConfig",
+      "type": "object"
+    },
+    "RemoteForwardConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "local": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Local"
+        },
+        "remote": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Remote"
+        }
+      },
+      "required": [
+        "local",
+        "remote"
+      ],
+      "title": "RemoteForwardConfig",
+      "type": "object"
+    },
+    "SocksForwardConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "local": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Local"
+        }
+      },
+      "required": [
+        "local"
+      ],
+      "title": "SocksForwardConfig",
+      "type": "object"
+    },
+    "TunnelConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "forwards": {
+          "items": {
+            "$ref": "#/$defs/LocalForwardConfig"
+          },
+          "title": "Forwards",
+          "type": "array"
+        },
+        "host": {
+          "minLength": 1,
+          "title": "Host",
+          "type": "string"
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Identity"
+        },
+        "keep_alive": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Keep Alive"
+        },
+        "keep_alive_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Keep Alive Count"
+        },
+        "name": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Port"
+        },
+        "remote_forwards": {
+          "items": {
+            "$ref": "#/$defs/RemoteForwardConfig"
+          },
+          "title": "Remote Forwards",
+          "type": "array"
+        },
+        "socks": {
+          "items": {
+            "$ref": "#/$defs/SocksForwardConfig"
+          },
+          "title": "Socks",
+          "type": "array"
+        },
+        "ssh_options": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Ssh Options",
+          "type": "array"
+        },
+        "user": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User"
+        }
+      },
+      "required": [
+        "name",
+        "host"
+      ],
+      "title": "TunnelConfig",
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/goodboys-ai/tunneld/main/tunneld.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "daemon": {
+      "$ref": "#/$defs/DaemonConfig"
+    },
+    "defaults": {
+      "$ref": "#/$defs/DefaultsConfig"
+    },
+    "tunnels": {
+      "items": {
+        "$ref": "#/$defs/TunnelConfig"
+      },
+      "title": "Tunnels",
+      "type": "array"
+    }
+  },
+  "title": "AppConfig",
+  "type": "object"
+}

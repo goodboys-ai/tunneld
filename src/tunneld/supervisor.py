@@ -1,4 +1,4 @@
-"""Per-tunnel ssh subprocess supervision with auto-reconnect."""
+"""Per-tunnel SSH subprocess supervision with auto-reconnect."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ import threading
 import time
 from typing import Dict, List, Optional
 
-from .config import Tunnel
+from .command import build_forward_specs
+from .config import TunnelConfig
 
 
 def _fmt_dur(seconds: float) -> str:
@@ -22,12 +23,21 @@ def _fmt_dur(seconds: float) -> str:
 
 
 class Supervisor:
-    """Owns one ssh subprocess for a single [[tunnels]] block."""
+    """Own one SSH subprocess for one [[tunnels]] entry."""
 
-    def __init__(self, tunnel: Tunnel, argv: List[str], log_path: str):
+    def __init__(
+        self,
+        tunnel: TunnelConfig,
+        argv: List[str],
+        log_path: str,
+        reconnect_initial_delay: float = 1.0,
+        reconnect_max_delay: float = 30.0,
+    ):
         self.tunnel = tunnel
         self.argv = argv
         self.log_path = log_path
+        self.reconnect_initial_delay = float(reconnect_initial_delay)
+        self.reconnect_max_delay = float(reconnect_max_delay)
         self.proc: Optional[subprocess.Popen] = None
         self.state = "stopped"
         self.last_error = ""
@@ -35,14 +45,14 @@ class Supervisor:
         self._stop = threading.Event()
         self._watch_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
-        self._backoff = 1
+        self._backoff = self.reconnect_initial_delay
 
     def start(self) -> None:
         with self._lock:
             if self.proc is not None and self.proc.poll() is None:
                 return
             self._stop.clear()
-            self._backoff = 1
+            self._backoff = self.reconnect_initial_delay
             self._spawn_locked()
         self._watch_thread = threading.Thread(target=self._watch, daemon=True)
         self._watch_thread.start()
@@ -58,6 +68,7 @@ class Supervisor:
             except Exception:
                 try:
                     proc.kill()
+                    proc.wait(timeout=1)
                 except Exception:
                     pass
         if self._watch_thread is not None and self._watch_thread.is_alive():
@@ -69,9 +80,19 @@ class Supervisor:
         self.stop()
         self.start()
 
-    def update(self, argv: List[str]) -> None:
-        if argv != self.argv:
-            self.argv = argv
+    def update_config(
+        self,
+        tunnel: TunnelConfig,
+        argv: List[str],
+        reconnect_initial_delay: float,
+        reconnect_max_delay: float,
+    ) -> None:
+        restart_required = argv != self.argv
+        self.tunnel = tunnel
+        self.argv = argv
+        self.reconnect_initial_delay = float(reconnect_initial_delay)
+        self.reconnect_max_delay = float(reconnect_max_delay)
+        if restart_required:
             self.restart()
 
     def status(self) -> Dict:
@@ -85,14 +106,18 @@ class Supervisor:
                 if started is not None and self.state == "running"
                 else ""
             )
+            state = self.state
             return {
                 "name": self.tunnel.name,
                 "host": self.tunnel.host,
-                "forwards": len(self.tunnel.forwards),
-                "state": self.state,
+                "enabled": self.tunnel.enabled,
+                "state": state,
                 "pid": pid,
                 "uptime": uptime,
                 "last_error": self.last_error,
+                "forwards": [
+                    spec.status(state) for spec in build_forward_specs(self.tunnel)
+                ],
             }
 
     def _spawn_locked(self) -> None:
@@ -100,12 +125,22 @@ class Supervisor:
         self.state = "starting"
         self.last_error = ""
         self._started_at = time.time()
-        self.proc = subprocess.Popen(
-            self.argv,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-        )
+        try:
+            self.proc = subprocess.Popen(
+                self.argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            message = f"failed to start ssh: {exc}"
+            logf.write((message + "\n").encode("utf-8", errors="replace"))
+            logf.close()
+            self.proc = None
+            self._started_at = None
+            self.state = "reconnecting"
+            self.last_error = message
+            return
         threading.Thread(
             target=self._pump, args=(self.proc.stdout, logf), daemon=True
         ).start()
@@ -132,18 +167,27 @@ class Supervisor:
         while not self._stop.is_set():
             with self._lock:
                 proc = self.proc
+                started_at = self._started_at
             if proc is None:
-                break
+                delay = self._backoff
+                if self._stop.wait(delay):
+                    break
+                self._backoff = min(self._backoff * 2, self.reconnect_max_delay)
+                with self._lock:
+                    self._spawn_locked()
+                continue
             rc = proc.wait()
             if self._stop.is_set():
                 break
+            if started_at is not None and time.time() - started_at >= 30:
+                self._backoff = self.reconnect_initial_delay
             with self._lock:
                 self.state = "reconnecting"
                 self.last_error = f"ssh exited with code {rc}"
             delay = self._backoff
             if self._stop.wait(delay):
                 break
-            self._backoff = min(self._backoff * 2, 30)
+            self._backoff = min(self._backoff * 2, self.reconnect_max_delay)
             if self._stop.is_set():
                 break
             with self._lock:

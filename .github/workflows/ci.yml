@@ -23,5 +23,11 @@ jobs:
       - name: Install project and dev deps
         run: uv sync --extra dev
 
+      - name: Lint
+        run: uv run ruff check src tests
+
+      - name: Check formatting
+        run: uv run ruff format --check src tests
+
       - name: Run tests
         run: uv run pytest -q

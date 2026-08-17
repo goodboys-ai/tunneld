@@ -53,7 +53,9 @@ def send_request(op: str, **args: Any) -> Dict[str, Any]:
     return resp.get("data", {})
 
 
-def handle_connection(conn: socket.socket, handler: Callable[[str, Dict], Dict]) -> None:
+def handle_connection(
+    conn: socket.socket, handler: Callable[[str, Dict], Dict]
+) -> None:
     """Serve exactly one request/response on *conn*."""
     try:
         line = _recv_line(conn)

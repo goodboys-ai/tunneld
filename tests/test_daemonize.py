@@ -26,7 +26,9 @@ def test_spawn_daemon_passes_one_positional_command(monkeypatch, tmp_path):
         daemonize.state, "daemon_log_path", lambda: tmp_path / "daemon.log"
     )
     monkeypatch.setattr(
-        daemonize.subprocess, "Popen", lambda *args, **kwargs: calls.append((args, kwargs))
+        daemonize.subprocess,
+        "Popen",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
     )
 
     daemonize.spawn_daemon("/tmp/tunneld.toml")

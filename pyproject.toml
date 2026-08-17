@@ -6,7 +6,8 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 dependencies = [
-  "tomlkit>=0.12; python_version < '3.11'",
+  "pydantic>=2.7,<3",
+  "tomli>=2; python_version < '3.11'",
   "typer>=0.12",
   "rich>=13",
 ]
@@ -16,7 +17,10 @@ Homepage = "https://github.com/goodboys-ai/tunneld"
 Repository = "https://github.com/goodboys-ai/tunneld"
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+dev = [
+  "pytest>=7",
+  "ruff>=0.6",
+]
 
 [project.scripts]
 tunneld = "tunneld.cli:app"
@@ -27,3 +31,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tunneld"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

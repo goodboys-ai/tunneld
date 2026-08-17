@@ -1,146 +1,241 @@
 # tunneld
 
-Config-driven SSH tunnel manager. Define your tunnels in one TOML file; tunneld
-keeps them connected in the background, auto-reconnects on drops, and
-multiplexes every forward to the same host onto a single ssh connection.
+Config-driven SSH tunnel manager for Python 3.9+. Define local, SOCKS, and
+remote forwards in TOML; tunneld runs one system OpenSSH process per target,
+keeps it connected, and reloads changes automatically.
 
-One [[tunnels]] block = one target host = one ssh connection.
-Each [[tunnels.forwards]] block = one -L / -D / -R channel on that connection.
+One `[[tunnels]]` entry means one SSH connection. Every entry in its
+`forwards`, `socks`, and `remote_forwards` arrays shares that connection.
 
-This is a public repository.
+## Features
 
-## Why tunneld
-
-- **Multiplexing.** Unlike tools that open one ssh per forward, tunneld groups
-  forwards by host so you authenticate once and run a single connection per
-  host, carrying all of its -L / -D / -R channels.
-- **Auto-reconnect.** Each connection is supervised and respawned with
-  exponential backoff (1s .. 30s) when it drops.
-- **Auto-reload.** Edit the config and tunneld converges to it (watch = true).
-  Only changed tunnels are restarted; a parse error leaves running tunnels alone.
-- **Zero magic.** It drives your system ssh, so ~/.ssh/config, ssh-agent,
-  ProxyJump and known_hosts all behave exactly as you expect.
+- Local (`-L`), dynamic SOCKS5 (`-D`), and remote (`-R`) forwarding.
+- One SSH process per tunnel, regardless of forwarding-entry count.
+- Automatic reconnect with bounded exponential backoff.
+- Automatic, non-destructive config reload.
+- Strict Pydantic validation with unknown-key rejection and useful field paths.
+- Per-forward status rows, optional labels, listener conflict checks, and JSON Schema.
+- Uses system `ssh`, preserving `~/.ssh/config`, ssh-agent, ProxyJump, and known_hosts.
 
 ## Requirements
 
-- Python 3.9+ (3.11+ uses the stdlib tomllib; 3.9/3.10 fall back to tomlkit)
-- OpenSSH client (the ssh binary) on PATH
-- Linux / macOS (control channel uses a Unix domain socket)
+- Python 3.9+
+- OpenSSH client (`ssh` on `PATH`)
+- Linux or macOS (the daemon control channel is a Unix domain socket)
+
+Python 3.11+ uses `tomllib`; Python 3.9/3.10 use `tomli`.
 
 ## Install
 
-    uv tool install "tunneld @ git+https://github.com/goodboys-ai/tunneld"
+~~~console
+uv tool install "tunneld @ git+https://github.com/goodboys-ai/tunneld"
+~~~
 
-Upgrade:
+## Quick start
 
-    uv tool upgrade tunneld
+~~~console
+tunneld init
+tunneld edit
+tunneld check --show-command
+tunneld up
+tunneld status
+~~~
 
-## Quickstart
+The default config is `$XDG_CONFIG_HOME/tunneld/tunneld.toml`, falling back to
+`~/.config/tunneld/tunneld.toml`. Override it with a global option:
 
-    tunneld init          # write a commented example config
-    tunneld edit          # open it in $EDITOR
-    tunneld up            # start everything (daemon auto-starts in background)
-    tunneld status        # show running tunnels
+~~~console
+tunneld --config ./tunneld.toml check
+~~~
 
-The config lives at $XDG_CONFIG_HOME/tunneld/tunneld.toml
-(default ~/.config/tunneld/tunneld.toml). Override it with --config.
+Global options must appear before the subcommand.
 
-## Config example
+## Configuration
 
-    [defaults]
-    keep_alive = 30   # seconds -> ssh ServerAliveInterval
-    watch = true      # auto-reload config on change
+`tunneld init` writes a concise config. `tunneld init --full` writes a fully
+commented example containing every supported setting.
 
-    [[tunnels]]
-    name = "prod"
-    host = "prod"              # ~/.ssh/config alias or literal hostname
-    user = "root"              # optional
-    # port = 22                # optional
-    # identity = "~/.ssh/id_ed25519"   # optional
-    # ssh_options = ["Compression=yes"]
+~~~toml
+#:schema https://raw.githubusercontent.com/goodboys-ai/tunneld/main/tunneld.schema.json
 
-      [[tunnels.forwards]]
-      mode = "local"           # -L
-      local = "5432"
-      remote = "db.internal:5432"
+[daemon]
+watch = true
+watch_interval = 1.5
+reconnect_initial_delay = 1.0
+reconnect_max_delay = 30.0
 
-      [[tunnels.forwards]]
-      mode = "local"           # -L
-      local = "6379"
-      remote = "redis.internal:6379"
+[defaults]
+keep_alive = 30
+keep_alive_count = 3
 
-      [[tunnels.forwards]]
-      mode = "socks"           # -D
-      local = "1080"
+[[tunnels]]
+name = "prod"
+host = "prod"                  # ~/.ssh/config alias or hostname
+enabled = true
+user = "root"                  # optional
+# port = 22
+# identity = "~/.ssh/id_ed25519"
+ssh_options = ["Compression=yes"]
 
-    [[tunnels]]
-    name = "staging"
-    host = "staging"
+# Local forwarding (-L): listen here, connect from the SSH server side.
+forwards = [
+  { label = "postgres", local = 5432, remote = 5432 },
+  { label = "service_b", local = 4321, remote = "db.internal:4321" },
+  { local = "127.0.0.1:9090", remote = "metrics.internal:9090" },
+]
 
-      [[tunnels.forwards]]
-      mode = "socks"
-      local = "1081"
+# Dynamic SOCKS5 forwarding (-D).
+socks = [
+  { label = "proxy", local = 1080 },
+]
 
-This yields ONE ssh process for prod (carrying -L 5432, -L 6379 and -D 1080)
-and one for staging. Run tunneld check to print the exact commands.
+# Remote forwarding (-R): listen on the SSH server, connect back here.
+remote_forwards = [
+  { label = "webhook", local = 8080, remote = 18080 },
+]
 
-## Forward modes
+[[tunnels]]
+name = "staging"
+host = "staging"
 
-- local  -> ssh -L (forwards local:remote)
-- socks  -> ssh -D (dynamic SOCKS5 proxy)
-- remote -> ssh -R (forwards remote:local)
+forwards = [
+  { local = 15432, remote = "postgres.internal:5432" },
+]
 
-The local field accepts a bare port (binds 127.0.0.1) or host:port (binds that
-interface), matching OpenSSH's [bind:] syntax.
+socks = [
+  { local = 1081 },
+]
+~~~
+
+This creates two SSH processes. The `prod` command contains three `-L`
+arguments, one `-D`, and one `-R`.
+
+### Endpoint shorthand
+
+An integer means `localhost:<port>` on the corresponding side:
+
+~~~toml
+{ local = 5432, remote = 5432 }
+~~~
+
+becomes `-L 5432:localhost:5432`. Use a string for an explicit address:
+
+~~~toml
+{ local = "127.0.0.1:5432", remote = "db.internal:5432" }
+~~~
+
+Bare ports written as strings (`"5432"`) are rejected; write `5432` instead.
+Ports must be in `1..65535`. IPv6 endpoints use `[address]:port`.
+
+Binding a local or SOCKS listener to `0.0.0.0` exposes it to other machines.
+A remote `0.0.0.0` listener also requires the SSH server to permit `GatewayPorts`.
+
+### Forward direction
+
+| Config array | OpenSSH | Listener | Target reached from |
+|---|---|---|---|
+| `forwards` | `-L` | local machine | SSH server side |
+| `socks` | `-D` | local machine | dynamic through SSH |
+| `remote_forwards` | `-R` | SSH server | local machine side |
+
+`label` is optional. If present, it must be unique across all forwarding arrays
+within that tunnel. It affects status and errors, not the SSH command.
+
+### Strict validation
+
+Pydantic rejects unknown keys, invalid endpoints, duplicate tunnel names,
+duplicate labels, conflicting enabled local listeners, managed SSH options, and
+tunnels without forwarding entries. Tunnel names must start with an ASCII letter
+or digit and may also contain `.`, `_`, and `-`. Disabled tunnels are excluded
+from listener-conflict checks. `keep_alive_count = 0` is accepted and preserves
+OpenSSH's no-termination behavior.
+
+~~~console
+tunneld check
+tunneld check --show-command
+tunneld schema
+tunneld schema --output tunneld.schema.json
+~~~
+
+## Status model
+
+`status` groups rows by tunnel and displays every forwarding entry:
+
+~~~text
+prod  prod  running  pid=12844  uptime=2h13m
+
+LABEL     TYPE  SIDE    LISTEN          TARGET          STATE
+postgres  -L    local   localhost:5432  localhost:5432  active
+proxy     -D    local   localhost:1080  SOCKS5          active
+webhook   -R    remote  localhost:18080 localhost:8080  active
+~~~
+
+All entries in a tunnel share one SSH process, so their state inherits the
+tunnel state. `active` means OpenSSH created the listener successfully; it is
+not a destination-service health check.
 
 ## Commands
 
-    tunneld up [names...]            start (default: all enabled)
-    tunneld down [names...]          stop (default: all)
-    tunneld restart [names...]       restart (default: all)
-    tunneld reload                   re-read config and converge
-    tunneld status                   running state
-    tunneld list                     show the config
-    tunneld check                    print the ssh command per tunnel
-    tunneld logs NAME --follow       tail a tunnel's ssh output
-    tunneld init / edit / doctor     config helpers
-    tunneld --version
+~~~text
+tunneld up [NAMES...]             start enabled tunnels
+tunneld down [NAMES...]           stop tunnels but keep the daemon
+tunneld down --kill-daemon        stop tunnels and daemon
+tunneld restart [NAMES...]        restart tunnels
+tunneld reload                    reload and converge immediately
+tunneld status                    show tunnel and forwarding-entry state
+tunneld list                      inspect config without the daemon
+tunneld check [--show-command]    strictly validate and normalize config
+tunneld logs NAME [--follow]      read one tunnel's SSH output
+tunneld init [--full]             write a config template
+tunneld edit                      open config in $EDITOR
+tunneld doctor                    check config, ssh, and host aliases
+tunneld schema [-o PATH]          emit JSON Schema
+tunneld --version
+~~~
 
-## Behavior
+## Daemon behavior
 
-- up launches a daemon in the background if one is not already running.
-- The daemon starts every enabled tunnel and supervises it; if ssh exits it
-  respawns with exponential backoff.
-- The config is watched with a ~1.5s stat poll (negligible cost). On change
-  only affected tunnels restart; a bad edit never tears down running tunnels.
-- down NAME stops a tunnel and marks it manually-stopped until up NAME or
-  restart NAME. down --kill-daemon stops everything including the daemon.
-- Per-tunnel logs: $XDG_RUNTIME_DIR/tunneld/logs/NAME.log (or ~/.cache/tunneld).
+- `up` starts a detached daemon if necessary.
+- Every SSH process uses `ExitOnForwardFailure=yes` and configured keepalives.
+- A dropped process reconnects using the configured delay range.
+- The watcher performs one `stat` at the configured interval and only parses
+  when mtime changes.
+- Invalid edits leave current tunnels running and appear as a config error.
+- `down NAME` stays stopped until `up NAME` or `restart NAME`.
+- Logs live under `$XDG_RUNTIME_DIR/tunneld/logs/`, falling back to
+  `~/.cache/tunneld/logs/`.
 
-## systemd (service-managed foreground daemon)
+## systemd user service
 
-    # ~/.config/systemd/user/tunneld.service
-    [Unit]
-    Description=tunneld SSH tunnel manager
-    After=network-online.target
+~~~ini
+# ~/.config/systemd/user/tunneld.service
+[Unit]
+Description=tunneld SSH tunnel manager
+After=network-online.target
 
-    [Service]
-    ExecStart=%h/.local/bin/tunneld daemon --foreground
-    Restart=always
-    RestartSec=3
+[Service]
+ExecStart=%h/.local/bin/tunneld daemon --foreground
+Restart=always
+RestartSec=3
 
-    [Install]
-    WantedBy=default.target
+[Install]
+WantedBy=default.target
+~~~
 
-    systemctl --user enable --now tunneld
+~~~console
+systemctl --user daemon-reload
+systemctl --user enable --now tunneld
+~~~
 
 ## Development
 
-    git clone https://github.com/goodboys-ai/tunneld
-    cd tunneld
-    uv sync --extra dev          # or: python -m venv .venv && pip install -e '.[dev]'
-    pytest
+~~~console
+git clone https://github.com/goodboys-ai/tunneld
+cd tunneld
+uv sync --extra dev
+uv run pytest
+~~~
 
 ## License
 
-MIT. See LICENSE.
+MIT. See [LICENSE](LICENSE).

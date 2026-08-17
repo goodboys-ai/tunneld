@@ -1,26 +1,105 @@
-"""Turn a Tunnel into an ssh argv list."""
+"""Normalize forwarding entries and build the OpenSSH argv."""
 
 from __future__ import annotations
 
-import hashlib
 import os
-from typing import List
+import shlex
+from dataclasses import dataclass
+from typing import List, Optional
 
-from .config import Forward, Tunnel
-
-
-def forward_arg(fwd: Forward) -> str:
-    if fwd.mode == "local":
-        return f"-L {fwd.local}:{fwd.remote}"
-    if fwd.mode == "socks":
-        return f"-D {fwd.local}"
-    return f"-R {fwd.remote}:{fwd.local}"
+from .config import DefaultsConfig, Endpoint, TunnelConfig
 
 
-def build_command(tunnel: Tunnel, default_keep_alive: int) -> List[str]:
-    keep_alive = (
-        tunnel.keep_alive if tunnel.keep_alive is not None else default_keep_alive
-    )
+@dataclass(frozen=True)
+class ForwardSpec:
+    label: Optional[str]
+    kind: str
+    option: str
+    argument: str
+    listen_side: str
+    listen: str
+    target: str
+
+    def status(self, state: str) -> dict:
+        return {
+            "label": self.label,
+            "kind": self.kind,
+            "listen_side": self.listen_side,
+            "listen": self.listen,
+            "target": self.target,
+            "state": _entry_state(state),
+        }
+
+
+def _entry_state(tunnel_state: str) -> str:
+    if tunnel_state == "running":
+        return "active"
+    return tunnel_state
+
+
+def listener_argument(endpoint: Endpoint) -> str:
+    return str(endpoint)
+
+
+def target_argument(endpoint: Endpoint) -> str:
+    if isinstance(endpoint, int):
+        return f"localhost:{endpoint}"
+    return endpoint
+
+
+def display_endpoint(endpoint: Endpoint) -> str:
+    if isinstance(endpoint, int):
+        return f"localhost:{endpoint}"
+    return endpoint
+
+
+def build_forward_specs(tunnel: TunnelConfig) -> List[ForwardSpec]:
+    specs: List[ForwardSpec] = []
+    for entry in tunnel.forwards:
+        listen_arg = listener_argument(entry.local)
+        target_arg = target_argument(entry.remote)
+        specs.append(
+            ForwardSpec(
+                label=entry.label,
+                kind="-L",
+                option="-L",
+                argument=f"{listen_arg}:{target_arg}",
+                listen_side="local",
+                listen=display_endpoint(entry.local),
+                target=display_endpoint(entry.remote),
+            )
+        )
+    for entry in tunnel.socks:
+        listen_arg = listener_argument(entry.local)
+        specs.append(
+            ForwardSpec(
+                label=entry.label,
+                kind="-D",
+                option="-D",
+                argument=listen_arg,
+                listen_side="local",
+                listen=display_endpoint(entry.local),
+                target="SOCKS5",
+            )
+        )
+    for entry in tunnel.remote_forwards:
+        listen_arg = listener_argument(entry.remote)
+        target_arg = target_argument(entry.local)
+        specs.append(
+            ForwardSpec(
+                label=entry.label,
+                kind="-R",
+                option="-R",
+                argument=f"{listen_arg}:{target_arg}",
+                listen_side="remote",
+                listen=display_endpoint(entry.remote),
+                target=display_endpoint(entry.local),
+            )
+        )
+    return specs
+
+
+def build_command(tunnel: TunnelConfig, defaults: DefaultsConfig) -> List[str]:
     cmd = [
         "ssh",
         "-N",
@@ -28,27 +107,22 @@ def build_command(tunnel: Tunnel, default_keep_alive: int) -> List[str]:
         "-o",
         "ExitOnForwardFailure=yes",
         "-o",
-        f"ServerAliveInterval={keep_alive}",
+        f"ServerAliveInterval={tunnel.effective_keep_alive(defaults)}",
         "-o",
-        "ServerAliveCountMax=3",
+        f"ServerAliveCountMax={tunnel.effective_keep_alive_count(defaults)}",
     ]
     if tunnel.port is not None:
         cmd += ["-p", str(tunnel.port)]
     if tunnel.identity:
         cmd += ["-i", os.path.expanduser(tunnel.identity)]
-    for opt in tunnel.ssh_options:
-        cmd += ["-o", opt]
-    for fwd in tunnel.forwards:
-        cmd.append(forward_arg(fwd))
+    for option in tunnel.ssh_options:
+        cmd += ["-o", option]
+    for spec in build_forward_specs(tunnel):
+        cmd += [spec.option, spec.argument]
     target = f"{tunnel.user}@{tunnel.host}" if tunnel.user else tunnel.host
     cmd.append(target)
     return cmd
 
 
-def command_hash(tunnel: Tunnel, default_keep_alive: int) -> str:
-    """Stable identity for a tunnel's argv, used to detect config changes."""
-    h = hashlib.sha1()
-    for part in build_command(tunnel, default_keep_alive):
-        h.update(part.encode("utf-8"))
-        h.update(b"\0")
-    return h.hexdigest()
+def command_display(tunnel: TunnelConfig, defaults: DefaultsConfig) -> str:
+    return shlex.join(build_command(tunnel, defaults))

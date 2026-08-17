@@ -6,74 +6,112 @@ import time
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
-from .command import build_command, forward_arg
+from .command import build_forward_specs, command_display
 
 console = Console()
 
 STATE_COLORS = {
+    "active": "green",
     "running": "green",
     "reconnecting": "yellow",
     "starting": "cyan",
     "stopped": "dim",
+    "disabled": "dim",
+    "configured": "cyan",
     "error": "red",
 }
 
 
 def info(msg: str) -> None:
-    console.print(f"[green]OK[/green] {msg}")
+    console.print(f"[green]OK[/green] {escape(str(msg))}")
 
 
 def error(msg: str) -> None:
-    console.print(f"[bold red]ERROR[/bold red] {msg}")
+    console.print(f"[bold red]ERROR[/bold red] {escape(str(msg))}")
 
 
 def warn(msg: str) -> None:
-    console.print(f"[yellow]WARN[/yellow] {msg}")
+    console.print(f"[yellow]WARN[/yellow] {escape(str(msg))}")
+
+
+def _entry_table(entries, title: str = "") -> Table:
+    table = Table(title=title or None)
+    table.add_column("Label")
+    table.add_column("Type")
+    table.add_column("Side")
+    table.add_column("Listen")
+    table.add_column("Target")
+    table.add_column("State")
+    for entry in entries:
+        entry_state = entry.get("state", "configured")
+        color = STATE_COLORS.get(entry_state, "white")
+        table.add_row(
+            escape(entry.get("label") or "—"),
+            entry["kind"],
+            entry["listen_side"],
+            escape(entry["listen"]),
+            escape(entry["target"]),
+            f"[{color}]{entry_state}[/{color}]",
+        )
+    return table
 
 
 def render_status(data: dict) -> None:
-    d = data.get("daemon", {})
+    daemon = data.get("daemon", {})
     console.print(
-        f"[bold]tunneld[/bold]  pid={d.get('pid')}  config={d.get('config')}"
+        f"[bold]tunneld[/bold]  pid={daemon.get('pid')}  "
+        f"config={escape(str(daemon.get('config')))}"
     )
-    if d.get("config_error"):
-        console.print(f"[red]config error:[/red] {d['config_error']}")
-    table = Table(title="Tunnels")
-    for col in ("Name", "Host", "Fwd", "State", "PID", "Uptime", "Last error"):
-        table.add_column(col)
-    for t in data.get("tunnels", []):
-        state = t["state"]
-        color = STATE_COLORS.get(state, "white")
-        table.add_row(
-            t["name"],
-            t["host"],
-            str(t["forwards"]),
-            f"[{color}]{state}[/{color}]",
-            str(t.get("pid") or "-"),
-            t.get("uptime") or "-",
-            t.get("last_error") or "-",
+    if daemon.get("config_error"):
+        console.print(f"[red]config error:[/red] {escape(str(daemon['config_error']))}")
+    tunnels = data.get("tunnels", [])
+    if not tunnels:
+        warn("no configured tunnels")
+        return
+    for tunnel in tunnels:
+        tunnel_state = tunnel["state"]
+        color = STATE_COLORS.get(tunnel_state, "white")
+        details = [
+            f"[bold]{escape(tunnel['name'])}[/bold]",
+            escape(tunnel["host"]),
+            f"[{color}]{tunnel_state}[/{color}]",
+        ]
+        if tunnel.get("pid"):
+            details.append(f"pid={tunnel['pid']}")
+        if tunnel.get("uptime"):
+            details.append(f"uptime={tunnel['uptime']}")
+        console.print("  ".join(details))
+        if tunnel.get("last_error"):
+            console.print(f"  [red]{escape(tunnel['last_error'])}[/red]")
+        console.print(_entry_table(tunnel.get("forwards", [])))
+
+
+def render_list(config) -> None:
+    console.print(f"[bold]Config:[/bold] {escape(config.path)}")
+    for tunnel in config.tunnels:
+        state = "configured" if tunnel.enabled else "disabled"
+        color = STATE_COLORS[state]
+        console.print(
+            f"[bold]{escape(tunnel.name)}[/bold]  {escape(tunnel.host)}  "
+            f"[{color}]{state}[/{color}]"
         )
-    console.print(table)
+        entries = [spec.status(state) for spec in build_forward_specs(tunnel)]
+        console.print(_entry_table(entries))
 
 
-def render_list(cfg) -> None:
-    table = Table(title=f"Config: {cfg.path}")
-    table.add_column("Tunnel")
-    table.add_column("Host")
-    table.add_column("Forwards")
-    for t in cfg.tunnels:
-        fwds = ", ".join(forward_arg(f) for f in t.forwards)
-        table.add_row(t.name, t.host, fwds)
-    console.print(table)
-
-
-def render_check(cfg) -> None:
-    for t in cfg.tunnels:
-        argv = build_command(t, cfg.keep_alive)
-        console.print(f"[bold]{t.name}[/bold]  ({t.host})")
-        console.print(f"  [dim]{' '.join(argv)}[/dim]")
+def render_check(config, show_command: bool = False) -> None:
+    info(f"config valid: {config.path}")
+    for tunnel in config.tunnels:
+        state = "configured" if tunnel.enabled else "disabled"
+        console.print(f"[bold]{escape(tunnel.name)}[/bold]  ({escape(tunnel.host)})")
+        entries = [spec.status(state) for spec in build_forward_specs(tunnel)]
+        console.print(_entry_table(entries))
+        if show_command:
+            command = escape(command_display(tunnel, config.defaults))
+            console.print(f"  [dim]{command}[/dim]")
 
 
 def tail(path: Path, lines: int, follow: bool) -> None:

@@ -1,5 +1,4 @@
-"""tunneld daemon: converge running tunnels to the config, supervise ssh,
-and serve the control socket."""
+"""Converge running tunnels to config, supervise SSH, and serve IPC."""
 
 from __future__ import annotations
 
@@ -11,8 +10,8 @@ import time
 from typing import Dict, Optional
 
 from . import state
-from .config import Config, ConfigError, Tunnel, load_config
-from .command import build_command
+from .command import build_command, build_forward_specs
+from .config import AppConfig, ConfigError, TunnelConfig, load_config
 from .ipc import handle_connection
 from .supervisor import Supervisor
 
@@ -24,63 +23,85 @@ def _safe(name: str) -> str:
 class Daemon:
     def __init__(self, config_path: str):
         self.config_path = config_path
-        self.config: Optional[Config] = None
+        self.config: Optional[AppConfig] = None
         self.config_error = ""
         self.manual_stopped: set = set()
         self.sup: Dict[str, Supervisor] = {}
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        self._op_lock = threading.RLock()
 
     def load(self) -> bool:
         try:
-            self.config = load_config(self.config_path)
-            self.config_error = ""
-            return True
+            config = load_config(self.config_path)
         except (OSError, ConfigError) as exc:
-            self.config_error = str(exc)
+            with self._lock:
+                self.config_error = str(exc)
             return False
+        with self._lock:
+            self.config = config
+            self.config_error = ""
+        return True
 
-    def _find(self, name: str) -> Optional[Tunnel]:
+    def _find(self, name: str) -> Optional[TunnelConfig]:
         if self.config is None:
             return None
-        for t in self.config.tunnels:
-            if t.name == name:
-                return t
+        for tunnel in self.config.tunnels:
+            if tunnel.name == name:
+                return tunnel
         return None
 
     def _log_path(self, name: str) -> str:
         return str(state.log_dir() / f"{_safe(name)}.log")
 
     def apply(self) -> None:
-        """Make running supervisors match the config (minus manually-stopped)."""
+        """Converge supervisors to config without restarting unchanged commands."""
         cfg = self.config
         if cfg is None:
             return
+        initial_delay = float(cfg.daemon.reconnect_initial_delay)
+        max_delay = float(cfg.daemon.reconnect_max_delay)
+
         with self._lock:
-            desired = {}
-            for t in cfg.tunnels:
-                if not t.enabled or t.name in self.manual_stopped:
-                    continue
-                desired[t.name] = build_command(t, cfg.keep_alive)
-            for name in list(self.sup):
-                if name not in desired:
-                    self.sup[name].stop()
-                    del self.sup[name]
-            for name, argv in desired.items():
-                sup = self.sup.get(name)
-                if sup is None:
-                    t = self._find(name)
-                    sup = Supervisor(t, argv, self._log_path(name))
-                    self.sup[name] = sup
-                    sup.start()
-                elif sup.argv != argv:
-                    sup.update(argv)
+            valid_names = {tunnel.name for tunnel in cfg.tunnels}
+            self.manual_stopped.intersection_update(valid_names)
+            desired = {
+                tunnel.name: (tunnel, build_command(tunnel, cfg.defaults))
+                for tunnel in cfg.tunnels
+                if tunnel.enabled and tunnel.name not in self.manual_stopped
+            }
+            obsolete = [name for name in self.sup if name not in desired]
+            obsolete_sups = [self.sup.pop(name) for name in obsolete]
+
+        for supervisor in obsolete_sups:
+            supervisor.stop()
+
+        for name, (tunnel, argv) in desired.items():
+            with self._lock:
+                supervisor = self.sup.get(name)
+                if supervisor is None:
+                    supervisor = Supervisor(
+                        tunnel,
+                        argv,
+                        self._log_path(name),
+                        initial_delay,
+                        max_delay,
+                    )
+                    self.sup[name] = supervisor
+                    start = True
+                else:
+                    start = False
+            if start:
+                supervisor.start()
+            else:
+                supervisor.update_config(tunnel, argv, initial_delay, max_delay)
 
     def reload(self) -> bool:
-        if not self.load():
-            return False
-        self.apply()
-        return True
+        with self._op_lock:
+            if not self.load():
+                return False
+            self.apply()
+            return True
 
     def start_all(self) -> None:
         with self._lock:
@@ -88,8 +109,11 @@ class Daemon:
         self.apply()
 
     def start_one(self, name: str) -> None:
-        if self._find(name) is None:
+        tunnel = self._find(name)
+        if tunnel is None:
             raise ValueError(f"unknown tunnel {name!r}")
+        if not tunnel.enabled:
+            raise ValueError(f"tunnel {name!r} is disabled in the config")
         with self._lock:
             self.manual_stopped.discard(name)
         self.apply()
@@ -98,41 +122,80 @@ class Daemon:
         with self._lock:
             names = list(self.sup)
             self.manual_stopped.update(names)
-            sups = {n: self.sup.pop(n) for n in names}
-        for sup in sups.values():
-            sup.stop()
+            supervisors = [self.sup.pop(name) for name in names]
+        for supervisor in supervisors:
+            supervisor.stop()
 
     def stop_one(self, name: str) -> None:
+        if self._find(name) is None:
+            raise ValueError(f"unknown tunnel {name!r}")
         with self._lock:
             self.manual_stopped.add(name)
-            sup = self.sup.pop(name, None)
-        if sup is not None:
-            sup.stop()
+            supervisor = self.sup.pop(name, None)
+        if supervisor is not None:
+            supervisor.stop()
 
     def restart_all(self) -> None:
         with self._lock:
             self.manual_stopped.clear()
-            names = list(self.sup)
-        for name in names:
-            self.restart_one(name)
+            supervisors = list(self.sup.values())
+        for supervisor in supervisors:
+            supervisor.restart()
+        self.apply()
 
     def restart_one(self, name: str) -> None:
+        tunnel = self._find(name)
+        if tunnel is None:
+            raise ValueError(f"unknown tunnel {name!r}")
+        if not tunnel.enabled:
+            raise ValueError(f"tunnel {name!r} is disabled in the config")
         with self._lock:
             self.manual_stopped.discard(name)
-            sup = self.sup.get(name)
-        if sup is None:
-            self.start_one(name)
+            supervisor = self.sup.get(name)
+        if supervisor is None:
+            self.apply()
             return
-        sup.restart()
+        supervisor.restart()
+
+    def _inactive_tunnel_status(self, tunnel: TunnelConfig, tunnel_state: str) -> Dict:
+        return {
+            "name": tunnel.name,
+            "host": tunnel.host,
+            "enabled": tunnel.enabled,
+            "state": tunnel_state,
+            "pid": None,
+            "uptime": "",
+            "last_error": "",
+            "forwards": [
+                spec.status(tunnel_state) for spec in build_forward_specs(tunnel)
+            ],
+        }
 
     def status_data(self) -> Dict:
         with self._lock:
-            rows = [s.status() for s in self.sup.values()]
+            cfg = self.config
+            config_error = self.config_error
+            supervisors = dict(self.sup)
+            manually_stopped = set(self.manual_stopped)
+
+        rows = []
+        if cfg is not None:
+            for tunnel in cfg.tunnels:
+                supervisor = supervisors.get(tunnel.name)
+                if supervisor is not None:
+                    rows.append(supervisor.status())
+                elif not tunnel.enabled:
+                    rows.append(self._inactive_tunnel_status(tunnel, "disabled"))
+                elif tunnel.name in manually_stopped:
+                    rows.append(self._inactive_tunnel_status(tunnel, "stopped"))
+                else:
+                    rows.append(self._inactive_tunnel_status(tunnel, "stopped"))
+
         return {
             "daemon": {
                 "pid": os.getpid(),
                 "config": self.config_path,
-                "config_error": self.config_error,
+                "config_error": config_error,
             },
             "tunnels": rows,
         }
@@ -141,33 +204,32 @@ class Daemon:
         name = args.get("name")
         if op == "status":
             return self.status_data()
-        if op == "start":
-            if name:
-                self.start_one(name)
+        with self._op_lock:
+            if op == "start":
+                self.start_one(name) if name else self.start_all()
+            elif op == "stop":
+                self.stop_one(name) if name else self.stop_all()
+            elif op == "restart":
+                self.restart_one(name) if name else self.restart_all()
+            elif op == "reload":
+                if not self.reload():
+                    raise ValueError(self.config_error)
+            elif op == "shutdown":
+                threading.Thread(target=self.shutdown, daemon=True).start()
             else:
-                self.start_all()
-        elif op == "stop":
-            if name:
-                self.stop_one(name)
-            else:
-                self.stop_all()
-        elif op == "restart":
-            if name:
-                self.restart_one(name)
-            else:
-                self.restart_all()
-        elif op == "reload":
-            if not self.reload():
-                raise ValueError(self.config_error)
-        elif op == "shutdown":
-            threading.Thread(target=self.shutdown, daemon=True).start()
-        else:
-            raise ValueError(f"unknown op {op!r}")
+                raise ValueError(f"unknown op {op!r}")
         return self.status_data()
 
     def _watch_config(self) -> None:
         last: Optional[int] = None
-        while not self._stop.wait(1.5):
+        while not self._stop.is_set():
+            cfg = self.config
+            interval = float(cfg.daemon.watch_interval) if cfg is not None else 1.5
+            if self._stop.wait(interval):
+                break
+            cfg = self.config
+            if cfg is not None and not cfg.daemon.watch:
+                continue
             try:
                 mtime = os.stat(self.config_path).st_mtime_ns
             except OSError:
@@ -179,11 +241,8 @@ class Daemon:
                 continue
             last = mtime
             time.sleep(0.5)
-            if self._stop.is_set():
-                break
-            if self.config is not None and not self.config.watch:
-                continue
-            self.reload()
+            if not self._stop.is_set():
+                self.reload()
 
     def _serve(self) -> None:
         sp = str(state.socket_path())
@@ -236,22 +295,22 @@ class Daemon:
 
     def shutdown_children(self) -> None:
         with self._lock:
-            sups = list(self.sup.values())
+            supervisors = list(self.sup.values())
             self.sup.clear()
-        for sup in sups:
-            sup.stop()
+        for supervisor in supervisors:
+            supervisor.stop()
 
     def _wait_for_signal(self) -> None:
-        evt = threading.Event()
+        event = threading.Event()
 
         def handler(sig, frame):  # noqa: ARG001
-            evt.set()
+            event.set()
 
         old_int = signal.signal(signal.SIGINT, handler)
         old_term = signal.signal(signal.SIGTERM, handler)
         try:
-            while not self._stop.is_set() and not evt.is_set():
-                evt.wait(0.5)
+            while not self._stop.is_set() and not event.is_set():
+                event.wait(0.5)
         finally:
             signal.signal(signal.SIGINT, old_int)
             signal.signal(signal.SIGTERM, old_term)
