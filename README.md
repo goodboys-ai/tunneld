@@ -1,5 +1,11 @@
 # tunneld
 
+[![CI](https://github.com/goodboys-ai/tunneld/actions/workflows/ci.yml/badge.svg)](https://github.com/goodboys-ai/tunneld/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/tunneld)](https://pypi.org/project/tunneld/)
+[![Python versions](https://img.shields.io/pypi/pyversions/tunneld)](https://pypi.org/project/tunneld/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+
 Config-driven SSH tunnel manager for Python 3.9+. Define local, dynamic
 proxy, and remote forwards in TOML; tunneld runs one system OpenSSH process per
 `[[tunnels]]` entry, keeps it connected, and reloads changes automatically.
