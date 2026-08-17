@@ -1,6 +1,6 @@
 [project]
 name = "tunneld"
-version = "0.3.0"
+version = "0.3.1"
 description = "Config-driven SSH tunnel manager: one SSH connection per tunnel, many -L/-D/-R forwards, auto-reconnect."
 readme = "README.md"
 requires-python = ">=3.9"
