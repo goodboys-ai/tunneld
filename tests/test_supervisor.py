@@ -248,3 +248,70 @@ def test_two_phase_stop_begins_then_finishes(tmp_path, monkeypatch):
     supervisor.finish_stop(proc, time.monotonic() + 2)
     assert supervisor.state == "stopped"
     assert proc.poll() is not None
+
+
+class _StubbornProc:
+    def __init__(self):
+        self.killed = False
+        self.waits = []
+
+    def poll(self):
+        return None
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        raise Exception("still running")
+
+
+def test_finish_stop_kills_survivors_even_after_deadline(monkeypatch, tmp_path):
+    clock = iter([0.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0])
+    monkeypatch.setattr("tunneld.supervisor.time.monotonic", lambda: next(clock))
+    tunnel = TunnelConfig(
+        name="t",
+        host="h",
+        forwards=[LocalForwardConfig(local=15432, remote=5432)],
+    )
+    procs = []
+    supervisors = []
+    for _ in range(2):
+        proc = _StubbornProc()
+        procs.append(proc)
+        supervisor = Supervisor(
+            tunnel, build_command(tunnel, DefaultsConfig()), str(tmp_path / "l")
+        )
+        supervisor.proc = proc
+        supervisors.append(supervisor)
+
+    from tunneld.daemon import Daemon
+
+    daemon = Daemon(str(tmp_path / "c.toml"))
+    daemon._stop_batch(supervisors)
+
+    assert procs[0].killed
+    assert procs[1].killed
+    assert all(sup.state == "stopped" for sup in supervisors)
+
+
+def test_single_stop_keeps_graceful_and_kill_budgets(monkeypatch, tmp_path):
+    clock = iter([0.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr("tunneld.supervisor.time.monotonic", lambda: next(clock))
+    tunnel = TunnelConfig(
+        name="t",
+        host="h",
+        forwards=[LocalForwardConfig(local=15432, remote=5432)],
+    )
+    supervisor = Supervisor(
+        tunnel, build_command(tunnel, DefaultsConfig()), str(tmp_path / "l")
+    )
+    proc = _StubbornProc()
+    supervisor.proc = proc
+    supervisor.stop()
+    assert proc.killed
+    assert proc.waits == [5.0, 1.0]
+    assert supervisor.state == "stopped"

@@ -111,15 +111,22 @@ class Supervisor:
         return proc
 
     def finish_stop(self, proc: Optional[subprocess.Popen], deadline: float) -> None:
-        """Wait for a detached process within the deadline, then kill and join."""
+        """Gracefully wait, kill survivors, and join the watcher within deadline."""
         remaining = deadline - time.monotonic()
         if proc is not None and proc.poll() is None and remaining > 0:
             try:
-                proc.wait(timeout=remaining)
+                proc.wait(timeout=min(remaining, 5.0))
             except Exception:
+                pass
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
                 try:
-                    proc.kill()
-                    proc.wait(timeout=1)
+                    proc.wait(timeout=min(remaining, 1.0))
                 except Exception:
                     pass
         remaining = deadline - time.monotonic()
@@ -129,7 +136,8 @@ class Supervisor:
             and remaining > 0
         ):
             self._watch_thread.join(timeout=remaining)
-        self._watch_thread = None
+        if self._watch_thread is not None and not self._watch_thread.is_alive():
+            self._watch_thread = None
         self.state = "stopped"
 
     def stop(self) -> None:
