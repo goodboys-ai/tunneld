@@ -259,8 +259,14 @@ systemctl --user enable --now tunneld
 git clone https://github.com/goodboys-ai/tunneld
 cd tunneld
 uv sync --extra dev
-uv run pytest
+pre-commit install
+uv run pytest          # coverage report included; CI enforces >=70%
+uv run ruff check src tests
+uv run pyright
 ~~~
+
+Pre-commit runs Ruff lint/format, Pyright, and codespell. CI runs the same
+checks plus the coverage gate on Python 3.9, 3.11, and 3.12.
 
 ## License
 

@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-          cache-dependency-glob: pyproject.toml
+          cache-dependency-glob: uv.lock
 
       - name: Install project and dev deps
         run: uv sync --extra dev
@@ -30,5 +30,8 @@ jobs:
       - name: Check formatting
         run: uv run ruff format --check src tests
 
+      - name: Type check
+        run: uv run pyright
+
       - name: Run tests
-        run: uv run pytest -q
+        run: uv run pytest -q --cov-fail-under=70

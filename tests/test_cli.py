@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 from typer.testing import CliRunner
 
@@ -112,7 +113,7 @@ def test_ensure_daemon_restarts_incompatible_process(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.daemonize, "spawn_daemon", spawned.append)
     context = SimpleNamespace(obj={"config": tmp_path / "config.toml"})
 
-    cli._ensure_daemon(context)
+    cli._ensure_daemon(cast(Any, context))
 
     assert calls[:3] == [("status", {}), ("shutdown", {}), ("status", {})]
     assert spawned == [str(tmp_path / "config.toml")]
@@ -171,7 +172,7 @@ def test_ensure_daemon_skips_spawn_when_daemon_running(monkeypatch):
     spawned = []
     monkeypatch.setattr(cli.daemonize, "spawn_daemon", spawned.append)
     context = SimpleNamespace(obj={"config": Path("/tmp/config.toml")})
-    cli._ensure_daemon(context)
+    cli._ensure_daemon(cast(Any, context))
     assert spawned == []
 
 

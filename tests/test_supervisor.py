@@ -1,5 +1,6 @@
 import os
 import time
+from typing import Any, cast
 
 from tunneld import supervisor as supervisor_module
 from tunneld.command import build_command
@@ -32,6 +33,7 @@ def test_respawns_and_reports_individual_entries(tmp_path, monkeypatch):
     )
     supervisor.start()
     time.sleep(0.35)
+    assert supervisor.proc is not None
     first_pid = supervisor.proc.pid
     for _ in range(40):
         if supervisor.proc is not None and supervisor.proc.pid != first_pid:
@@ -136,7 +138,7 @@ def test_backoff_resets_after_process_was_stable(monkeypatch, tmp_path):
         reconnect_initial_delay=1,
         reconnect_max_delay=30,
     )
-    supervisor.proc = FinishedProcess()
+    supervisor.proc = cast(Any, FinishedProcess())
     supervisor._started_at = time.time() - 31
     supervisor._backoff = 16
     waits = []
@@ -285,7 +287,7 @@ def test_finish_stop_kills_survivors_even_after_deadline(monkeypatch, tmp_path):
         supervisor = Supervisor(
             tunnel, build_command(tunnel, DefaultsConfig()), str(tmp_path / "l")
         )
-        supervisor.proc = proc
+        supervisor.proc = cast(Any, proc)
         supervisors.append(supervisor)
 
     from tunneld.daemon import Daemon
@@ -310,7 +312,7 @@ def test_single_stop_keeps_graceful_and_kill_budgets(monkeypatch, tmp_path):
         tunnel, build_command(tunnel, DefaultsConfig()), str(tmp_path / "l")
     )
     proc = _StubbornProc()
-    supervisor.proc = proc
+    supervisor.proc = cast(Any, proc)
     supervisor.stop()
     assert proc.killed
     assert proc.waits == [5.0, 1.0]

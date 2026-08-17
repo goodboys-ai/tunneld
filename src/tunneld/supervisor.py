@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import threading
 import time
-from typing import Dict, List, Optional
+from typing import Optional
 
 from .command import build_forward_specs
 from .config import TunnelConfig
@@ -43,7 +44,7 @@ def _truncate_log(logf, prev_path: str, keep_bytes: int = LOG_TAIL_KEEP_BYTES) -
             (
                 f"[log truncated at {time.strftime('%Y-%m-%d %H:%M:%S')}; "
                 f"see {os.path.basename(prev_path)}]\n"
-            ).encode("utf-8")
+            ).encode()
         )
         logf.flush()
     except OSError:
@@ -67,7 +68,7 @@ class Supervisor:
     def __init__(
         self,
         tunnel: TunnelConfig,
-        argv: List[str],
+        argv: list[str],
         log_path: str,
         reconnect_initial_delay: float = 1.0,
         reconnect_max_delay: float = 30.0,
@@ -104,31 +105,23 @@ class Supervisor:
         with self._lock:
             proc, self.proc = self.proc, None
         if proc is not None and proc.poll() is None:
-            try:
+            with contextlib.suppress(Exception):
                 proc.terminate()
-            except Exception:
-                pass
         return proc
 
     def finish_stop(self, proc: Optional[subprocess.Popen], deadline: float) -> None:
         """Gracefully wait, kill survivors, and join the watcher within deadline."""
         remaining = deadline - time.monotonic()
         if proc is not None and proc.poll() is None and remaining > 0:
-            try:
+            with contextlib.suppress(Exception):
                 proc.wait(timeout=min(remaining, 5.0))
-            except Exception:
-                pass
         if proc is not None and proc.poll() is None:
-            try:
+            with contextlib.suppress(Exception):
                 proc.kill()
-            except Exception:
-                pass
             remaining = deadline - time.monotonic()
             if remaining > 0:
-                try:
+                with contextlib.suppress(Exception):
                     proc.wait(timeout=min(remaining, 1.0))
-                except Exception:
-                    pass
         remaining = deadline - time.monotonic()
         if (
             self._watch_thread is not None
@@ -152,7 +145,7 @@ class Supervisor:
     def update_config(
         self,
         tunnel: TunnelConfig,
-        argv: List[str],
+        argv: list[str],
         reconnect_initial_delay: float,
         reconnect_max_delay: float,
     ) -> None:
@@ -165,7 +158,7 @@ class Supervisor:
         if restart_required:
             self.restart()
 
-    def status(self) -> Dict:
+    def status(self) -> dict:
         """Return tunnel and per-forward runtime status."""
         with self._lock:
             pid = None
@@ -207,10 +200,8 @@ class Supervisor:
                 except Exception:
                     pass
             if proc.stdout is not None:
-                try:
+                with contextlib.suppress(OSError):
                     proc.stdout.close()
-                except OSError:
-                    pass
         try:
             self._append_log(logf, (message + "\n").encode("utf-8", errors="replace"))
         finally:
@@ -221,7 +212,7 @@ class Supervisor:
         self.last_error = message
 
     def _spawn_locked(self) -> None:
-        logf = open(self.log_path, "a+b")
+        logf = open(self.log_path, "a+b")  # noqa: SIM115
         self.state = "starting"
         self.last_error = ""
         self._started_at = time.time()
@@ -266,14 +257,10 @@ class Supervisor:
             for line in stream:
                 self._append_log(logf, line)
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 stream.close()
-            except Exception:
-                pass
-            try:
+            with contextlib.suppress(Exception):
                 logf.close()
-            except Exception:
-                pass
 
     def _watch(self) -> None:
         while not self._stop.is_set():

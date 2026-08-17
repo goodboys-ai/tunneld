@@ -3,6 +3,7 @@ import stat
 import threading
 import time
 from types import SimpleNamespace
+from typing import Any, cast
 
 from tunneld import state
 from tunneld.config import parse_config
@@ -95,7 +96,7 @@ def test_apply_converges_and_respects_manual_stop(tmp_path, monkeypatch):
     daemon.config = _one_tunnel()
 
     daemon.apply()
-    first = daemon.sup["prod"]
+    first = cast(Any, daemon.sup["prod"])
     assert first.started == 1
 
     # A label-only edit updates status metadata without replacing the supervisor.
@@ -112,7 +113,7 @@ def test_apply_converges_and_respects_manual_stop(tmp_path, monkeypatch):
     assert "prod" not in daemon.sup
 
     daemon.start_one("prod")
-    second = daemon.sup["prod"]
+    second = cast(Any, daemon.sup["prod"])
     assert second is not first
     assert second.started == 1
 

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import socket
 import threading
 import time
-from typing import Dict, List, Optional
+from typing import Optional
 
 from . import state
 from .command import build_command, build_forward_specs
@@ -31,7 +32,7 @@ class Daemon:
         self.config: Optional[AppConfig] = None
         self.config_error = ""
         self.manual_stopped: set = set()
-        self.sup: Dict[str, Supervisor] = {}
+        self.sup: dict[str, Supervisor] = {}
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._op_lock = threading.RLock()
@@ -110,7 +111,7 @@ class Daemon:
             self.apply()
             return True
 
-    def _stop_batch(self, supervisors: List[Supervisor]) -> None:
+    def _stop_batch(self, supervisors: list[Supervisor]) -> None:
         """Begin stopping every supervisor, then finish within one shared deadline."""
         deadline = time.monotonic() + STOP_BUDGET_SECONDS
         procs = [supervisor.begin_stop() for supervisor in supervisors]
@@ -176,7 +177,7 @@ class Daemon:
             return
         supervisor.restart()
 
-    def _inactive_tunnel_status(self, tunnel: TunnelConfig, tunnel_state: str) -> Dict:
+    def _inactive_tunnel_status(self, tunnel: TunnelConfig, tunnel_state: str) -> dict:
         return {
             "name": tunnel.name,
             "host": tunnel.host,
@@ -191,7 +192,7 @@ class Daemon:
             ],
         }
 
-    def status_data(self) -> Dict:
+    def status_data(self) -> dict:
         """Return a protocol-versioned snapshot of daemon and tunnel state."""
         with self._lock:
             cfg = self.config
@@ -222,7 +223,7 @@ class Daemon:
             "tunnels": rows,
         }
 
-    def dispatch(self, op: str, args: Dict) -> Dict:
+    def dispatch(self, op: str, args: dict) -> dict:
         """Dispatch one validated IPC operation and return current status."""
         name = args.get("name")
         if op == "status":
@@ -270,15 +271,11 @@ class Daemon:
     def _serve(self) -> None:
         sp = str(state.socket_path())
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(sp)
-        except OSError:
-            pass
         server.bind(sp)
-        try:
+        with contextlib.suppress(OSError):
             os.chmod(sp, 0o600)
-        except OSError:
-            pass
         server.listen(16)
         server.settimeout(0.5)
         while not self._stop.is_set():
@@ -291,16 +288,12 @@ class Daemon:
             try:
                 conn.settimeout(IPC_TIMEOUT_SECONDS)
             except OSError:
-                try:
+                with contextlib.suppress(OSError):
                     conn.close()
-                except OSError:
-                    pass
                 continue
             if not self._conn_slots.acquire(blocking=False):
-                try:
+                with contextlib.suppress(OSError):
                     conn.close()
-                except OSError:
-                    pass
                 continue
             try:
                 thread = threading.Thread(
@@ -308,17 +301,13 @@ class Daemon:
                 )
                 thread.start()
             except Exception:
-                try:
+                with contextlib.suppress(OSError):
                     conn.close()
-                except OSError:
-                    pass
                 self._conn_slots.release()
                 continue
         server.close()
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(sp)
-        except OSError:
-            pass
 
     def _handle_conn(self, conn: socket.socket) -> None:
         try:
@@ -338,10 +327,8 @@ class Daemon:
         self._wait_for_signal()
         self._stop.set()
         self.shutdown_children()
-        try:
+        with contextlib.suppress(OSError):
             pid_file.unlink()
-        except OSError:
-            pass
 
     def shutdown(self) -> None:
         """Request an orderly daemon shutdown."""
@@ -357,7 +344,7 @@ class Daemon:
     def _wait_for_signal(self) -> None:
         event = threading.Event()
 
-        def handler(sig, frame):  # noqa: ARG001
+        def handler(sig, frame):
             event.set()
 
         old_int = signal.signal(signal.SIGINT, handler)

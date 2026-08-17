@@ -2,6 +2,7 @@ import json
 import socket
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, cast
 
 import pytest
 
@@ -32,18 +33,18 @@ class FakeConnection:
 def test_recv_line_rejects_oversized_messages():
     conn = FakeConnection([b"x" * (MAX_LINE_BYTES + 1)])
     with pytest.raises(IPCError, match="message too large"):
-        _recv_line(conn)
+        _recv_line(cast(Any, conn))
 
 
 def test_recv_line_rejects_invalid_utf8():
     conn = FakeConnection([b"\xff\n"])
     with pytest.raises(IPCError, match="not valid UTF-8"):
-        _recv_line(conn)
+        _recv_line(cast(Any, conn))
 
 
 def test_oversized_request_receives_bounded_error_response():
     conn = FakeConnection([b"x" * (MAX_LINE_BYTES + 1)])
-    handle_connection(conn, lambda op, args: {})
+    handle_connection(cast(Any, conn), lambda op, args: {})
     response = json.loads(bytes(conn.sent).decode("utf-8"))
     assert response == {"ok": False, "error": "message too large"}
     assert conn.closed
@@ -56,7 +57,9 @@ def test_malformed_json_receives_protocol_error():
     )
     thread.start()
     client.sendall(b"{not-json}\n")
-    response = json.loads(_recv_line(client))
+    line = _recv_line(client)
+    assert line is not None
+    response = json.loads(line)
     thread.join(timeout=2)
     client.close()
     assert response == {"ok": False, "error": "malformed request"}
@@ -71,7 +74,9 @@ def _round_trip(index):
     thread.start()
     request = json.dumps({"op": "echo", "args": {"index": index}}) + "\n"
     client.sendall(request.encode("utf-8"))
-    response = json.loads(_recv_line(client))
+    line = _recv_line(client)
+    assert line is not None
+    response = json.loads(line)
     thread.join(timeout=2)
     client.close()
     return response
@@ -92,7 +97,9 @@ def test_handle_connection_responds_and_closes_on_io_timeout():
     )
     thread.start()
     client.settimeout(2)
-    response = json.loads(_recv_line(client))
+    line = _recv_line(client)
+    assert line is not None
+    response = json.loads(line)
     thread.join(timeout=2)
     client.close()
     assert not thread.is_alive()

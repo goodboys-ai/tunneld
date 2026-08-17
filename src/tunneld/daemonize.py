@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import sys
 from pathlib import Path
@@ -42,21 +43,17 @@ def _rotate_if_oversize(
         source = path if index == 1 else path.with_name(f"{path.name}.{index - 1}")
         target = path.with_name(f"{path.name}.{index}")
         if source.exists():
-            try:
+            with contextlib.suppress(OSError):
                 target.unlink()
-            except OSError:
-                pass
-            try:
+            with contextlib.suppress(OSError):
                 source.rename(target)
-            except OSError:
-                pass
 
 
 def spawn_daemon(config_path: str) -> None:
     """Spawn tunneld as a detached process using the active interpreter."""
     state.ensure_runtime_dir()
     _rotate_if_oversize(state.daemon_log_path())
-    logf = open(str(state.daemon_log_path()), "ab")
+    logf = open(str(state.daemon_log_path()), "ab")  # noqa: SIM115
     subprocess.Popen(
         daemon_command(config_path),
         stdout=logf,

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import socket
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Optional
 
 from . import state
 
@@ -42,14 +43,14 @@ def _recv_line(conn: socket.socket) -> Optional[str]:
             raise IPCError("message too large")
 
 
-def _encode_line(payload: Dict[str, Any]) -> bytes:
+def _encode_line(payload: dict[str, Any]) -> bytes:
     data = (json.dumps(payload) + "\n").encode("utf-8")
     if len(data) > MAX_LINE_BYTES:
         raise IPCError("message too large")
     return data
 
 
-def _send_response(conn: socket.socket, payload: Dict[str, Any]) -> None:
+def _send_response(conn: socket.socket, payload: dict[str, Any]) -> None:
     try:
         data = _encode_line(payload)
     except IPCError:
@@ -57,7 +58,7 @@ def _send_response(conn: socket.socket, payload: Dict[str, Any]) -> None:
     conn.sendall(data)
 
 
-def send_request(op: str, **args: Any) -> Dict[str, Any]:
+def send_request(op: str, **args: Any) -> dict[str, Any]:
     """Send one bounded request to the daemon and return its data mapping."""
     request = _encode_line({"op": op, "args": args})
     sp = str(state.socket_path())
@@ -95,7 +96,7 @@ def send_request(op: str, **args: Any) -> Dict[str, Any]:
     return data
 
 
-def _parse_request(line: str) -> tuple[str, Dict[str, Any]]:
+def _parse_request(line: str) -> tuple[str, dict[str, Any]]:
     try:
         request = json.loads(line)
     except json.JSONDecodeError:
@@ -112,7 +113,7 @@ def _parse_request(line: str) -> tuple[str, Dict[str, Any]]:
 
 
 def handle_connection(
-    conn: socket.socket, handler: Callable[[str, Dict[str, Any]], Dict[str, Any]]
+    conn: socket.socket, handler: Callable[[str, dict[str, Any]], dict[str, Any]]
 ) -> None:
     """Serve exactly one bounded request/response on *conn*."""
     try:
@@ -122,14 +123,12 @@ def handle_connection(
                 return
             op, args = _parse_request(line)
             data = handler(op, args)
-            response: Dict[str, Any] = {"ok": True, "data": data}
+            response: dict[str, Any] = {"ok": True, "data": data}
         except Exception as exc:  # Return handler and protocol errors to the client.
             response = {"ok": False, "error": str(exc)}
         _send_response(conn, response)
     except (OSError, IPCError):
         pass
     finally:
-        try:
+        with contextlib.suppress(OSError):
             conn.close()
-        except OSError:
-            pass

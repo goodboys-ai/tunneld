@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Annotated, Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Annotated, Any, Optional, Union
 
 from pydantic import (
     AfterValidator,
@@ -21,7 +22,7 @@ from pydantic import (
 )
 
 try:  # Python 3.11+
-    import tomllib as _toml
+    import tomllib as _toml  # pyright: ignore[reportMissingImports]
 except ImportError:  # Python 3.9 / 3.10
     import tomli as _toml  # type: ignore
 
@@ -30,7 +31,7 @@ class ConfigError(ValueError):
     """A user-facing TOML or schema validation error."""
 
 
-def _endpoint_parts(value: Union[int, str]) -> Tuple[Optional[str], int]:
+def _endpoint_parts(value: Union[int, str]) -> tuple[Optional[str], int]:
     if isinstance(value, int):
         if isinstance(value, bool) or not 1 <= value <= 65535:
             raise ValueError("endpoint port must be between 1 and 65535")
@@ -99,7 +100,7 @@ class DaemonConfig(StrictModel):
     reconnect_max_delay: PositiveSeconds = 30.0
 
     @model_validator(mode="after")
-    def validate_delays(self) -> "DaemonConfig":
+    def validate_delays(self) -> DaemonConfig:
         """Require the initial reconnect delay not to exceed its maximum."""
         if self.reconnect_initial_delay > self.reconnect_max_delay:
             raise ValueError(
@@ -169,15 +170,15 @@ class TunnelConfig(StrictModel):
     identity: Optional[NonEmptyString] = None
     keep_alive: Optional[NonNegativeInt] = None
     keep_alive_count: Optional[NonNegativeInt] = None
-    ssh_options: List[NonEmptyString] = Field(default_factory=list)
+    ssh_options: list[NonEmptyString] = Field(default_factory=list)
 
-    forwards: List[LocalForwardConfig] = Field(default_factory=list)
-    proxy: List[ProxyForwardConfig] = Field(default_factory=list)
-    remote_forwards: List[RemoteForwardConfig] = Field(default_factory=list)
+    forwards: list[LocalForwardConfig] = Field(default_factory=list)
+    proxy: list[ProxyForwardConfig] = Field(default_factory=list)
+    remote_forwards: list[RemoteForwardConfig] = Field(default_factory=list)
 
     @field_validator("ssh_options")
     @classmethod
-    def validate_ssh_options(cls, options: List[str]) -> List[str]:
+    def validate_ssh_options(cls, options: list[str]) -> list[str]:
         """Reject malformed or tunneld-managed OpenSSH options."""
         for option in options:
             if "=" not in option:
@@ -190,7 +191,7 @@ class TunnelConfig(StrictModel):
         return options
 
     @model_validator(mode="after")
-    def validate_forward_entries(self) -> "TunnelConfig":
+    def validate_forward_entries(self) -> TunnelConfig:
         """Require entries and enforce per-tunnel label/listener uniqueness."""
         entries = list(self.iter_forward_entries())
         if not entries:
@@ -198,7 +199,7 @@ class TunnelConfig(StrictModel):
                 "at least one forwards, proxy, or remote_forwards entry is required"
             )
 
-        labels: Dict[str, str] = {}
+        labels: dict[str, str] = {}
         for kind, entry in entries:
             if entry.label is None:
                 continue
@@ -209,7 +210,7 @@ class TunnelConfig(StrictModel):
                 )
             labels[entry.label] = kind
 
-        remote_listeners: List[Tuple[str, Endpoint]] = []
+        remote_listeners: list[tuple[str, Endpoint]] = []
         for entry in self.remote_forwards:
             for previous_label, previous in remote_listeners:
                 if _listeners_conflict(previous, entry.remote):
@@ -223,7 +224,7 @@ class TunnelConfig(StrictModel):
             )
         return self
 
-    def iter_forward_entries(self) -> Iterator[Tuple[str, LabeledForward]]:
+    def iter_forward_entries(self) -> Iterator[tuple[str, LabeledForward]]:
         """Yield every forwarding entry with its configuration field name."""
         for entry in self.forwards:
             yield "forwards", entry
@@ -249,7 +250,7 @@ _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _WILDCARD_HOSTS = {"*", "0.0.0.0", "::"}
 
 
-def _listener_identity(endpoint: Endpoint) -> Tuple[str, int]:
+def _listener_identity(endpoint: Endpoint) -> tuple[str, int]:
     host, port = _endpoint_parts(endpoint)
     if host is None:
         return "loopback", port
@@ -276,7 +277,7 @@ class AppConfig(StrictModel):
 
     daemon: DaemonConfig = Field(default_factory=DaemonConfig)
     defaults: DefaultsConfig = Field(default_factory=DefaultsConfig)
-    tunnels: List[TunnelConfig] = Field(default_factory=list)
+    tunnels: list[TunnelConfig] = Field(default_factory=list)
 
     _path: str = PrivateAttr(default="")
 
@@ -286,11 +287,11 @@ class AppConfig(StrictModel):
         return self._path
 
     @model_validator(mode="after")
-    def validate_tunnels(self) -> "AppConfig":
+    def validate_tunnels(self) -> AppConfig:
         """Enforce unique tunnel names and cross-tunnel listener safety."""
-        names: Dict[str, int] = {}
-        local_listeners: List[Tuple[str, str, Endpoint]] = []
-        remote_listeners: List[Tuple[str, str, Endpoint]] = []
+        names: dict[str, int] = {}
+        local_listeners: list[tuple[str, str, Endpoint]] = []
+        remote_listeners: list[tuple[str, str, Endpoint]] = []
 
         for index, tunnel in enumerate(self.tunnels):
             if tunnel.name in names:
@@ -328,7 +329,7 @@ class AppConfig(StrictModel):
         return self
 
 
-def _format_location(location: Tuple[Any, ...]) -> str:
+def _format_location(location: tuple[Any, ...]) -> str:
     result = ""
     for part in location:
         if isinstance(part, int):
@@ -346,7 +347,7 @@ def _format_validation_error(error: ValidationError) -> str:
     return "\n".join(lines)
 
 
-def parse_config(document: Dict[str, Any], path: str = "") -> AppConfig:
+def parse_config(document: dict[str, Any], path: str = "") -> AppConfig:
     """Validate an in-memory configuration document.
 
     Args:
@@ -388,7 +389,7 @@ def load_config(path: Union[str, Path]) -> AppConfig:
     return parse_config(document, str(path))
 
 
-def config_schema() -> Dict[str, Any]:
+def config_schema() -> dict[str, Any]:
     """Return the JSON Schema for the strict application configuration."""
     schema = AppConfig.model_json_schema()
     schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"

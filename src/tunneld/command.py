@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import shlex
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
 
 from .config import DefaultsConfig, Endpoint, TunnelConfig
 
@@ -59,9 +59,9 @@ def display_endpoint(endpoint: Endpoint) -> str:
     return endpoint
 
 
-def build_forward_specs(tunnel: TunnelConfig) -> List[ForwardSpec]:
+def build_forward_specs(tunnel: TunnelConfig) -> list[ForwardSpec]:
     """Build normalized forwarding specifications for one tunnel."""
-    specs: List[ForwardSpec] = []
+    specs: list[ForwardSpec] = []
     for entry in tunnel.forwards:
         listen_arg = listener_argument(entry.local)
         target_arg = target_argument(entry.remote)
@@ -106,7 +106,7 @@ def build_forward_specs(tunnel: TunnelConfig) -> List[ForwardSpec]:
     return specs
 
 
-def build_command(tunnel: TunnelConfig, defaults: DefaultsConfig) -> List[str]:
+def build_command(tunnel: TunnelConfig, defaults: DefaultsConfig) -> list[str]:
     """Build the shell-free OpenSSH argv for one tunnel."""
     cmd = [
         "ssh",

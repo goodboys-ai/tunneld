@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -50,8 +51,6 @@ def ensure_runtime_dir() -> Path:
     d = runtime_dir()
     d.mkdir(parents=True, exist_ok=True)
     log_dir().mkdir(parents=True, exist_ok=True)
-    try:
+    with contextlib.suppress(OSError):
         os.chmod(d, 0o700)
-    except OSError:
-        pass
     return d

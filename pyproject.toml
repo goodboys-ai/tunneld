@@ -19,6 +19,10 @@ Repository = "https://github.com/goodboys-ai/tunneld"
 [project.optional-dependencies]
 dev = [
   "pytest>=7",
+  "pytest-cov>=5",
+  "pytest-timeout>=2",
+  "pre-commit>=3",
+  "pyright>=1.1.380",
   "ruff>=0.6",
 ]
 
@@ -37,11 +41,23 @@ target-version = "py39"
 line-length = 88
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "D"]
-ignore = ["D105", "D107"]
+select = ["E", "F", "I", "D", "B", "PERF", "RUF", "UP", "SIM"]
+ignore = ["D105", "D107", "BLE001", "B008", "UP007", "UP045"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"]
+
+[tool.pyright]
+pythonVersion = "3.9"
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "basic"
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+addopts = "--cov=src/tunneld --cov-report=term-missing"
+timeout = 60
+timeout_method = "thread"

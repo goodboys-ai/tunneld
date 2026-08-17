@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import typer
 
@@ -108,7 +108,7 @@ def _ensure_daemon(ctx: typer.Context) -> None:
     raise RuntimeError("daemon did not come up; check " + str(state.daemon_log_path()))
 
 
-def _validate_up_names(config, names: List[str]) -> None:
+def _validate_up_names(config, names: list[str]) -> None:
     """Reject unknown or disabled tunnel names before touching the daemon."""
     by_name = {tunnel.name: tunnel for tunnel in config.tunnels}
     for name in names:
@@ -121,7 +121,7 @@ def _validate_up_names(config, names: List[str]) -> None:
             raise typer.Exit(1)
 
 
-def _wait_for_up(names: Optional[List[str]], seconds: int) -> None:
+def _wait_for_up(names: Optional[list[str]], seconds: int) -> None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         try:
@@ -151,7 +151,7 @@ def _wait_for_up(names: Optional[List[str]], seconds: int) -> None:
 @app.command()
 def up(
     ctx: typer.Context,
-    names: List[str] = typer.Argument(None, help="Tunnel names (default: all)"),
+    names: list[str] = typer.Argument(None, help="Tunnel names (default: all)"),
     wait: int = typer.Option(0, "--wait", help="Wait up to N seconds for tunnels"),
 ):
     """Start tunnels (launching the daemon if needed)."""
@@ -159,7 +159,7 @@ def up(
         config = load_config(_cfg(ctx))
     except (OSError, ConfigError) as exc:
         ui.error(str(exc))
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     if names:
         _validate_up_names(config, names)
     try:
@@ -173,7 +173,7 @@ def up(
             send_request("start")
     except (IPCError, RuntimeError) as exc:
         ui.error(str(exc))
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     if wait:
         _wait_for_up(names, wait)
     ui.info("tunnels up")
@@ -182,7 +182,7 @@ def up(
 @app.command()
 def down(
     ctx: typer.Context,
-    names: List[str] = typer.Argument(None, help="Tunnel names (default: all)"),
+    names: list[str] = typer.Argument(None, help="Tunnel names (default: all)"),
     kill_daemon: bool = typer.Option(
         False, "--kill-daemon", help="Stop the daemon (retained for compatibility)"
     ),
@@ -213,13 +213,13 @@ def down(
         ui.info("tunnels stopped; daemon kept running")
     except IPCError as exc:
         ui.error(str(exc))
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 @app.command()
 def restart(
     ctx: typer.Context,
-    names: List[str] = typer.Argument(None, help="Tunnel names (default: all)"),
+    names: list[str] = typer.Argument(None, help="Tunnel names (default: all)"),
 ):
     """Restart tunnels."""
     try:
@@ -231,7 +231,7 @@ def restart(
         ui.info("restarted")
     except IPCError as exc:
         ui.error(str(exc))
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 @app.command()
@@ -242,7 +242,7 @@ def reload(ctx: typer.Context):
         ui.info("reloaded")
     except IPCError as exc:
         ui.error(str(exc))
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 @app.command()
@@ -252,7 +252,7 @@ def status(ctx: typer.Context):
         data = send_request("status")
     except IPCError as exc:
         ui.error(str(exc))
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     if not _daemon_compatible(data):
         ui.error(_incompatible_daemon_message())
         raise typer.Exit(1)
@@ -266,7 +266,7 @@ def list_cmd(ctx: typer.Context):
         config = load_config(_cfg(ctx))
     except (OSError, ConfigError) as exc:
         ui.error(str(exc))
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     ui.render_list(config)
 
 
@@ -282,7 +282,7 @@ def check(
         config = load_config(_cfg(ctx))
     except (OSError, ConfigError) as exc:
         ui.error(str(exc))
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     ui.render_check(config, show_command=show_command)
 
 
