@@ -128,8 +128,8 @@ class LocalForwardConfig(LabeledForward):
     remote: Endpoint
 
 
-class SocksForwardConfig(LabeledForward):
-    """Describe one dynamic OpenSSH ``-D`` listener."""
+class ProxyForwardConfig(LabeledForward):
+    """Describe one dynamic OpenSSH ``-D`` SOCKS5 proxy listener."""
 
     local: Endpoint
 
@@ -172,7 +172,7 @@ class TunnelConfig(StrictModel):
     ssh_options: List[NonEmptyString] = Field(default_factory=list)
 
     forwards: List[LocalForwardConfig] = Field(default_factory=list)
-    socks: List[SocksForwardConfig] = Field(default_factory=list)
+    proxy: List[ProxyForwardConfig] = Field(default_factory=list)
     remote_forwards: List[RemoteForwardConfig] = Field(default_factory=list)
 
     @field_validator("ssh_options")
@@ -195,7 +195,7 @@ class TunnelConfig(StrictModel):
         entries = list(self.iter_forward_entries())
         if not entries:
             raise ValueError(
-                "at least one forwards, socks, or remote_forwards entry is required"
+                "at least one forwards, proxy, or remote_forwards entry is required"
             )
 
         labels: Dict[str, str] = {}
@@ -227,8 +227,8 @@ class TunnelConfig(StrictModel):
         """Yield every forwarding entry with its configuration field name."""
         for entry in self.forwards:
             yield "forwards", entry
-        for entry in self.socks:
-            yield "socks", entry
+        for entry in self.proxy:
+            yield "proxy", entry
         for entry in self.remote_forwards:
             yield "remote_forwards", entry
 
@@ -302,7 +302,7 @@ class AppConfig(StrictModel):
             if not tunnel.enabled:
                 continue
 
-            for entry in [*tunnel.forwards, *tunnel.socks]:
+            for entry in [*tunnel.forwards, *tunnel.proxy]:
                 label = entry.label or "unlabeled forward"
                 for previous_tunnel, previous_label, previous in local_listeners:
                     if _listeners_conflict(previous, entry.local):

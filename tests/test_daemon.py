@@ -15,7 +15,7 @@ def test_status_includes_stopped_and_disabled_forward_entries(tmp_path):
                 {
                     "name": "ready",
                     "host": "host",
-                    "socks": [{"label": "proxy", "local": 1080}],
+                    "proxy": [{"label": "proxy", "local": 1080}],
                 },
                 {
                     "name": "disabled",
@@ -115,14 +115,14 @@ def test_apply_converges_and_respects_manual_stop(tmp_path, monkeypatch):
 def test_failed_reload_preserves_last_good_config(tmp_path):
     path = tmp_path / "tunneld.toml"
     path.write_text(
-        '[[tunnels]]\nname = "prod"\nhost = "prod"\nsocks = [{ local = 1080 }]\n'
+        '[[tunnels]]\nname = "prod"\nhost = "prod"\nproxy = [{ local = 1080 }]\n'
     )
     daemon = Daemon(str(path))
     assert daemon.load()
     previous = daemon.config
 
     path.write_text(
-        '[[tunnels]]\nname = "prod"\nhost = "prod"\nsocks = [{ loacl = 1080 }]\n'
+        '[[tunnels]]\nname = "prod"\nhost = "prod"\nproxy = [{ loacl = 1080 }]\n'
     )
     assert not daemon.reload()
     assert daemon.config is previous

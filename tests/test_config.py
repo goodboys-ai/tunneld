@@ -21,7 +21,7 @@ def valid_document():
                     {"label": "db", "local": 5432, "remote": 5432},
                     {"local": 4321, "remote": "db.internal:4321"},
                 ],
-                "socks": [{"label": "proxy", "local": 1080}],
+                "proxy": [{"label": "proxy", "local": 1080}],
                 "remote_forwards": [
                     {"label": "webhook", "local": 8080, "remote": 18080}
                 ],
@@ -35,7 +35,7 @@ def test_new_schema_parses_all_forward_types():
     tunnel = config.tunnels[0]
     assert tunnel.forwards[0].label == "db"
     assert tunnel.forwards[0].remote == 5432
-    assert tunnel.socks[0].local == 1080
+    assert tunnel.proxy[0].local == 1080
     assert tunnel.remote_forwards[0].remote == 18080
     assert config.defaults.keep_alive_count == 3
     assert config.daemon.watch_interval == 1.5
@@ -90,7 +90,7 @@ def test_invalid_endpoints_are_rejected(endpoint):
 
 def test_duplicate_labels_across_forward_kinds_are_rejected():
     document = valid_document()
-    document["tunnels"][0]["socks"][0]["label"] = "db"
+    document["tunnels"][0]["proxy"][0]["label"] = "db"
     with pytest.raises(ConfigError, match="duplicate label"):
         parse_config(document)
 
@@ -100,7 +100,7 @@ def test_duplicate_tunnel_names_are_rejected():
     duplicate = {
         "name": "prod",
         "host": "other",
-        "socks": [{"local": 1081}],
+        "proxy": [{"local": 1081}],
     }
     document["tunnels"].append(duplicate)
     with pytest.raises(ConfigError, match="duplicate tunnel name"):
@@ -110,7 +110,7 @@ def test_duplicate_tunnel_names_are_rejected():
 def test_enabled_local_listener_conflicts_are_rejected():
     document = valid_document()
     document["tunnels"].append(
-        {"name": "other", "host": "other", "socks": [{"local": 5432}]}
+        {"name": "other", "host": "other", "proxy": [{"local": 5432}]}
     )
     with pytest.raises(ConfigError, match="local listener"):
         parse_config(document)
@@ -123,7 +123,7 @@ def test_disabled_tunnel_listener_may_overlap():
             "name": "disabled",
             "host": "other",
             "enabled": False,
-            "socks": [{"local": 5432}],
+            "proxy": [{"local": 5432}],
         }
     )
     assert len(parse_config(document).tunnels) == 2
@@ -215,3 +215,10 @@ def test_same_remote_listener_on_different_hosts_is_allowed():
         ]
     }
     assert len(parse_config(document).tunnels) == 2
+
+
+def test_legacy_socks_key_is_rejected_as_unknown():
+    document = valid_document()
+    document["tunnels"][0]["socks"] = [{"local": 1080}]
+    with pytest.raises(ConfigError, match=r"tunnels\[0\]\.socks"):
+        parse_config(document)

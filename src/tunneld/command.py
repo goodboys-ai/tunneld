@@ -76,7 +76,7 @@ def build_forward_specs(tunnel: TunnelConfig) -> List[ForwardSpec]:
                 target=display_endpoint(entry.remote),
             )
         )
-    for entry in tunnel.socks:
+    for entry in tunnel.proxy:
         listen_arg = listener_argument(entry.local)
         specs.append(
             ForwardSpec(

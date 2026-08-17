@@ -18,8 +18,8 @@ forwards = [
   { label = "database", local = 5432, remote = "db.internal:5432" },
 ]
 
-socks = [
-  { local = 1080 },
+proxy = [
+  { label = "browser", local = 1080 },
 ]
 """
 
@@ -65,8 +65,8 @@ forwards = [
   { local = "127.0.0.1:9090", remote = "metrics.internal:9090" },
 ]
 
-# Dynamic SOCKS5 forwards (-D).
-socks = [
+# Dynamic SOCKS5 proxies (-D).
+proxy = [
   { label = "default_proxy", local = 1080 },
   # WARNING: 0.0.0.0 exposes the proxy to other machines.
   { label = "shared_proxy", local = "0.0.0.0:1081" },
@@ -89,7 +89,7 @@ forwards = [
   { label = "database", local = 15432, remote = "postgres.internal:5432" },
 ]
 
-socks = [
+proxy = [
   { local = 1082 },
 ]
 

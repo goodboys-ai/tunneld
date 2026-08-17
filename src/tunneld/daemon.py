@@ -171,6 +171,7 @@ class Daemon:
         return {
             "name": tunnel.name,
             "host": tunnel.host,
+            "user": tunnel.user,
             "enabled": tunnel.enabled,
             "state": tunnel_state,
             "pid": None,

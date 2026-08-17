@@ -31,7 +31,7 @@ def test_init_full_is_valid(tmp_path):
     result = runner.invoke(app, ["--config", str(path), "init", "--full"])
     assert result.exit_code == 0, result.output
     config = load_config(path)
-    assert config.tunnels[0].socks
+    assert config.tunnels[0].proxy
     assert config.tunnels[0].remote_forwards
 
 
@@ -46,7 +46,7 @@ def test_schema_outputs_json_schema():
 def test_version_works_without_a_subcommand():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0, result.output
-    assert "tunneld 0.2.1" in result.output
+    assert "tunneld 0.3.0" in result.output
 
 
 def test_committed_schema_covers_current_models():

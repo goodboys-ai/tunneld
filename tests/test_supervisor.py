@@ -49,7 +49,7 @@ def test_spawn_failure_enters_reconnect_instead_of_raising(tmp_path, monkeypatch
     tunnel = TunnelConfig(
         name="t",
         host="h",
-        socks=[],
+        proxy=[],
         forwards=[LocalForwardConfig(local=15432, remote=5432)],
     )
 

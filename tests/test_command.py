@@ -4,8 +4,8 @@ from tunneld.command import build_command, build_forward_specs
 from tunneld.config import (
     DefaultsConfig,
     LocalForwardConfig,
+    ProxyForwardConfig,
     RemoteForwardConfig,
-    SocksForwardConfig,
     TunnelConfig,
 )
 
@@ -20,7 +20,7 @@ def tunnel():
             LocalForwardConfig(label="db", local=5432, remote=5432),
             LocalForwardConfig(local=4321, remote="db.internal:4321"),
         ],
-        socks=[SocksForwardConfig(label="proxy", local=1080)],
+        proxy=[ProxyForwardConfig(label="proxy", local=1080)],
         remote_forwards=[
             RemoteForwardConfig(label="webhook", local=8080, remote=18080)
         ],

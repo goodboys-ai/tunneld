@@ -1,11 +1,11 @@
 # tunneld
 
-Config-driven SSH tunnel manager for Python 3.9+. Define local, SOCKS, and
-remote forwards in TOML; tunneld runs one system OpenSSH process per
+Config-driven SSH tunnel manager for Python 3.9+. Define local, dynamic
+proxy, and remote forwards in TOML; tunneld runs one system OpenSSH process per
 `[[tunnels]]` entry, keeps it connected, and reloads changes automatically.
 
 One `[[tunnels]]` entry means one SSH connection. Every entry in its
-`forwards`, `socks`, and `remote_forwards` arrays shares that connection.
+`forwards`, `proxy`, and `remote_forwards` arrays shares that connection.
 
 ## Features
 
@@ -14,7 +14,7 @@ One `[[tunnels]]` entry means one SSH connection. Every entry in its
 - Automatic reconnect with bounded exponential backoff.
 - Automatic, non-destructive config reload.
 - Strict Pydantic validation with unknown-key rejection and useful field paths.
-- Per-forward status rows, optional labels, listener conflict checks, and JSON Schema.
+- Per-forward route rows with server-side markers, optional labels, listener conflict checks, and JSON Schema.
 - Uses system `ssh`, preserving `~/.ssh/config`, ssh-agent, ProxyJump, and known_hosts.
 - Ships a PEP 561 `py.typed` marker for type-checking library consumers.
 
@@ -85,9 +85,9 @@ forwards = [
   { local = "127.0.0.1:9090", remote = "metrics.internal:9090" },
 ]
 
-# Dynamic SOCKS5 forwarding (-D).
-socks = [
-  { label = "proxy", local = 1080 },
+# Dynamic SOCKS5 proxy (-D).
+proxy = [
+  { label = "browser", local = 1080 },
 ]
 
 # Remote forwarding (-R): listen on the SSH server, connect back here.
@@ -103,7 +103,7 @@ forwards = [
   { local = 15432, remote = "postgres.internal:5432" },
 ]
 
-socks = [
+proxy = [
   { local = 1081 },
 ]
 ~~~
@@ -128,7 +128,7 @@ becomes `-L 5432:localhost:5432`. Use a string for an explicit address:
 Bare ports written as strings (`"5432"`) are rejected; write `5432` instead.
 Ports must be in `1..65535`. IPv6 endpoints use `[address]:port`.
 
-Binding a local or SOCKS listener to `0.0.0.0` exposes it to other machines.
+Binding a local or proxy listener to `0.0.0.0` exposes it to other machines.
 A remote `0.0.0.0` listener also requires the SSH server to permit `GatewayPorts`.
 
 ### Forward direction
@@ -136,7 +136,7 @@ A remote `0.0.0.0` listener also requires the SSH server to permit `GatewayPorts
 | Config array | OpenSSH | Listener | Target reached from |
 |---|---|---|---|
 | `forwards` | `-L` | local machine | SSH server side |
-| `socks` | `-D` | local machine | dynamic through SSH |
+| `proxy` | `-D` | local machine | dynamic through SSH |
 | `remote_forwards` | `-R` | SSH server | local machine side |
 
 `label` is optional. If present, it must be unique across all forwarding arrays
@@ -165,13 +165,22 @@ tunneld schema --output tunneld.schema.json
 `status` groups rows by tunnel and displays every forwarding entry:
 
 ~~~text
-prod  prod  running  pid=12844  uptime=2h13m
+tunneld  pid=12844  config=~/.config/tunneld/tunneld.toml
 
-LABEL     TYPE  SIDE    LISTEN          TARGET          STATE
-postgres  -L    local   localhost:5432  localhost:5432  active
-proxy     -D    local   localhost:1080  SOCKS5          active
-webhook   -R    remote  localhost:18080 localhost:8080  active
+prod  running  pid=12844  uptime=2h13m
+┏━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ Label    ┃ Type ┃ Route                                     ┃ State  ┃
+┡━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ postgres │ -L   │ localhost:5432 → localhost:5432 (prod)    │ active │
+│ browser  │ -D   │ localhost:1080 → dynamic (SOCKS5 via prod)│ active │
+│ webhook  │ -R   │ localhost:18080 (prod) → localhost:8080   │ active │
+└──────────┴──────┴───────────────────────────────────────────┴────────┘
 ~~~
+
+The Route column always reads entry → exit; a `(host)` suffix marks the
+endpoint resolved on the SSH server side, so identical address strings on both
+sides stay distinguishable. When `name == host`, the header shows the name
+once; otherwise it shows `name → user@host`.
 
 All entries in a tunnel share one SSH process, so their state inherits the
 tunnel state. `active` means OpenSSH created the listener successfully; it is

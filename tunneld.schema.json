@@ -2,6 +2,7 @@
   "$defs": {
     "DaemonConfig": {
       "additionalProperties": false,
+      "description": "Configure file watching and reconnect backoff.",
       "properties": {
         "reconnect_initial_delay": {
           "anyOf": [
@@ -56,6 +57,7 @@
     },
     "DefaultsConfig": {
       "additionalProperties": false,
+      "description": "Define keepalive defaults inherited by tunnels.",
       "properties": {
         "keep_alive": {
           "default": 30,
@@ -75,6 +77,7 @@
     },
     "LocalForwardConfig": {
       "additionalProperties": false,
+      "description": "Describe one local OpenSSH ``-L`` forwarding entry.",
       "properties": {
         "label": {
           "anyOf": [
@@ -123,8 +126,46 @@
       "title": "LocalForwardConfig",
       "type": "object"
     },
+    "ProxyForwardConfig": {
+      "additionalProperties": false,
+      "description": "Describe one dynamic OpenSSH ``-D`` SOCKS5 proxy listener.",
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "local": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Local"
+        }
+      },
+      "required": [
+        "local"
+      ],
+      "title": "ProxyForwardConfig",
+      "type": "object"
+    },
     "RemoteForwardConfig": {
       "additionalProperties": false,
+      "description": "Describe one remote OpenSSH ``-R`` forwarding entry.",
       "properties": {
         "label": {
           "anyOf": [
@@ -173,44 +214,9 @@
       "title": "RemoteForwardConfig",
       "type": "object"
     },
-    "SocksForwardConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "label": {
-          "anyOf": [
-            {
-              "minLength": 1,
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Label"
-        },
-        "local": {
-          "anyOf": [
-            {
-              "maximum": 65535,
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "title": "Local"
-        }
-      },
-      "required": [
-        "local"
-      ],
-      "title": "SocksForwardConfig",
-      "type": "object"
-    },
     "TunnelConfig": {
       "additionalProperties": false,
+      "description": "Configure one SSH process and all forwarding entries it carries.",
       "properties": {
         "enabled": {
           "default": true,
@@ -288,18 +294,18 @@
           "default": null,
           "title": "Port"
         },
+        "proxy": {
+          "items": {
+            "$ref": "#/$defs/ProxyForwardConfig"
+          },
+          "title": "Proxy",
+          "type": "array"
+        },
         "remote_forwards": {
           "items": {
             "$ref": "#/$defs/RemoteForwardConfig"
           },
           "title": "Remote Forwards",
-          "type": "array"
-        },
-        "socks": {
-          "items": {
-            "$ref": "#/$defs/SocksForwardConfig"
-          },
-          "title": "Socks",
           "type": "array"
         },
         "ssh_options": {
@@ -335,6 +341,7 @@
   "$id": "https://raw.githubusercontent.com/goodboys-ai/tunneld/main/tunneld.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "description": "Represent the complete validated tunneld configuration.",
   "properties": {
     "daemon": {
       "$ref": "#/$defs/DaemonConfig"

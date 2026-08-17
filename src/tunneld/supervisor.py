@@ -115,6 +115,7 @@ class Supervisor:
             return {
                 "name": self.tunnel.name,
                 "host": self.tunnel.host,
+                "user": self.tunnel.user,
                 "enabled": self.tunnel.enabled,
                 "state": state,
                 "pid": pid,
