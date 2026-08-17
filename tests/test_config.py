@@ -1,6 +1,6 @@
 import pytest
 
-from tunneld.config import ConfigError, load_config, parse_config
+from tunneld.config import ConfigError, _endpoint_parts, load_config, parse_config
 from tunneld.templates import FULL_CONFIG, MINIMAL_CONFIG
 
 
@@ -146,3 +146,72 @@ def test_managed_ssh_options_are_rejected():
     document["tunnels"][0]["ssh_options"] = ["LocalForward=1:host:1"]
     with pytest.raises(ConfigError, match="managed by tunneld"):
         parse_config(document)
+
+
+def test_endpoint_parts_defensively_rejects_invalid_integer_ports():
+    for value in (True, 0, -1, 65536):
+        with pytest.raises(ValueError, match="between 1 and 65535"):
+            _endpoint_parts(value)
+
+
+def test_endpoint_strings_are_stripped_before_validation():
+    config = parse_config(
+        {
+            "tunnels": [
+                {
+                    "name": " spaced ",
+                    "host": " host-alias ",
+                    "forwards": [
+                        {
+                            "label": " database ",
+                            "local": " 127.0.0.1:15432 ",
+                            "remote": " db.internal:5432 ",
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    tunnel = config.tunnels[0]
+    assert tunnel.name == "spaced"
+    assert tunnel.host == "host-alias"
+    assert tunnel.forwards[0].label == "database"
+    assert tunnel.forwards[0].local == "127.0.0.1:15432"
+    assert tunnel.forwards[0].remote == "db.internal:5432"
+
+
+def test_remote_listener_conflict_across_same_host_is_rejected():
+    document = {
+        "tunnels": [
+            {
+                "name": "first",
+                "host": "same-host",
+                "remote_forwards": [{"local": 8001, "remote": 18080}],
+            },
+            {
+                "name": "second",
+                "host": "same-host",
+                "remote_forwards": [{"local": 8002, "remote": "localhost:18080"}],
+            },
+        ]
+    }
+    with pytest.raises(ConfigError, match="remote listener"):
+        parse_config(document)
+
+
+def test_same_remote_listener_on_different_hosts_is_allowed():
+    document = {
+        "tunnels": [
+            {
+                "name": "first",
+                "host": "host-a",
+                "remote_forwards": [{"local": 8001, "remote": 18080}],
+            },
+            {
+                "name": "second",
+                "host": "host-b",
+                "remote_forwards": [{"local": 8002, "remote": 18080}],
+            },
+        ]
+    }
+    assert len(parse_config(document).tunnels) == 2

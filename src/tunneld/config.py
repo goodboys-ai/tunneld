@@ -32,6 +32,8 @@ class ConfigError(ValueError):
 
 def _endpoint_parts(value: Union[int, str]) -> Tuple[Optional[str], int]:
     if isinstance(value, int):
+        if isinstance(value, bool) or not 1 <= value <= 65535:
+            raise ValueError("endpoint port must be between 1 and 65535")
         return None, value
 
     if value.isdigit():

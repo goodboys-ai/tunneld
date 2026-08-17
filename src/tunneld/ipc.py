@@ -1,4 +1,4 @@
-"""Minimal NDJSON-over-Unix-socket control channel."""
+"""Bounded NDJSON-over-Unix-socket control channel."""
 
 from __future__ import annotations
 
@@ -9,24 +9,54 @@ from typing import Any, Callable, Dict, Optional
 
 from . import state
 
+MAX_LINE_BYTES = 1024 * 1024
+
 
 class IPCError(Exception):
     pass
 
 
+def _decode_line(data: bytearray) -> str:
+    try:
+        return bytes(data).decode("utf-8")
+    except UnicodeDecodeError:
+        raise IPCError("message is not valid UTF-8") from None
+
+
 def _recv_line(conn: socket.socket) -> Optional[str]:
-    data = b""
+    data = bytearray()
     while True:
         chunk = conn.recv(4096)
         if not chunk:
-            return None if not data else data.decode("utf-8")
-        data += chunk
-        if b"\n" in data:
-            line, _, _ = data.partition(b"\n")
-            return line.decode("utf-8")
+            return None if not data else _decode_line(data)
+        newline = chunk.find(b"\n")
+        if newline >= 0:
+            data.extend(chunk[:newline])
+            if len(data) > MAX_LINE_BYTES:
+                raise IPCError("message too large")
+            return _decode_line(data)
+        data.extend(chunk)
+        if len(data) > MAX_LINE_BYTES:
+            raise IPCError("message too large")
+
+
+def _encode_line(payload: Dict[str, Any]) -> bytes:
+    data = (json.dumps(payload) + "\n").encode("utf-8")
+    if len(data) > MAX_LINE_BYTES:
+        raise IPCError("message too large")
+    return data
+
+
+def _send_response(conn: socket.socket, payload: Dict[str, Any]) -> None:
+    try:
+        data = _encode_line(payload)
+    except IPCError:
+        data = _encode_line({"ok": False, "error": "response too large"})
+    conn.sendall(data)
 
 
 def send_request(op: str, **args: Any) -> Dict[str, Any]:
+    request = _encode_line({"op": op, "args": args})
     sp = str(state.socket_path())
     if not os.path.exists(sp):
         raise IPCError("daemon not running (try 'tunneld up')")
@@ -36,39 +66,64 @@ def send_request(op: str, **args: Any) -> Dict[str, Any]:
         sock.connect(sp)
     except OSError as exc:
         sock.close()
-        raise IPCError(f"cannot connect to daemon: {exc}")
+        raise IPCError(f"cannot connect to daemon: {exc}") from None
     try:
-        sock.sendall((json.dumps({"op": op, "args": args}) + "\n").encode("utf-8"))
+        sock.sendall(request)
         line = _recv_line(sock)
+    except IPCError:
+        raise
+    except OSError as exc:
+        raise IPCError(f"daemon communication failed: {exc}") from None
     finally:
         sock.close()
     if line is None:
         raise IPCError("daemon closed connection without responding")
     try:
-        resp = json.loads(line)
+        response = json.loads(line)
     except json.JSONDecodeError:
+        raise IPCError("malformed response from daemon") from None
+    if not isinstance(response, dict):
         raise IPCError("malformed response from daemon")
-    if not resp.get("ok"):
-        raise IPCError(resp.get("error", "unknown error"))
-    return resp.get("data", {})
+    if not response.get("ok"):
+        raise IPCError(str(response.get("error", "unknown error")))
+    data = response.get("data", {})
+    if not isinstance(data, dict):
+        raise IPCError("malformed response from daemon")
+    return data
+
+
+def _parse_request(line: str) -> tuple[str, Dict[str, Any]]:
+    try:
+        request = json.loads(line)
+    except json.JSONDecodeError:
+        raise IPCError("malformed request") from None
+    if not isinstance(request, dict):
+        raise IPCError("request must be a JSON object")
+    op = request.get("op")
+    args = request.get("args", {})
+    if not isinstance(op, str) or not op:
+        raise IPCError("request op must be a non-empty string")
+    if not isinstance(args, dict):
+        raise IPCError("request args must be an object")
+    return op, args
 
 
 def handle_connection(
-    conn: socket.socket, handler: Callable[[str, Dict], Dict]
+    conn: socket.socket, handler: Callable[[str, Dict[str, Any]], Dict[str, Any]]
 ) -> None:
-    """Serve exactly one request/response on *conn*."""
+    """Serve exactly one bounded request/response on *conn*."""
     try:
-        line = _recv_line(conn)
-        if line is None:
-            return
-        req = json.loads(line)
         try:
-            data = handler(req.get("op"), req.get("args", {}))
-            resp: Dict[str, Any] = {"ok": True, "data": data}
-        except Exception as exc:  # noqa: BLE001
-            resp = {"ok": False, "error": str(exc)}
-        conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
-    except Exception:
+            line = _recv_line(conn)
+            if line is None:
+                return
+            op, args = _parse_request(line)
+            data = handler(op, args)
+            response: Dict[str, Any] = {"ok": True, "data": data}
+        except Exception as exc:  # Return handler and protocol errors to the client.
+            response = {"ok": False, "error": str(exc)}
+        _send_response(conn, response)
+    except (OSError, IPCError):
         pass
     finally:
         try:

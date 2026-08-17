@@ -1,8 +1,8 @@
 # tunneld
 
 Config-driven SSH tunnel manager for Python 3.9+. Define local, SOCKS, and
-remote forwards in TOML; tunneld runs one system OpenSSH process per target,
-keeps it connected, and reloads changes automatically.
+remote forwards in TOML; tunneld runs one system OpenSSH process per
+`[[tunnels]]` entry, keeps it connected, and reloads changes automatically.
 
 One `[[tunnels]]` entry means one SSH connection. Every entry in its
 `forwards`, `socks`, and `remote_forwards` arrays shares that connection.
@@ -148,7 +148,9 @@ duplicate labels, conflicting enabled local listeners, managed SSH options, and
 tunnels without forwarding entries. Tunnel names must start with an ASCII letter
 or digit and may also contain `.`, `_`, and `-`. Disabled tunnels are excluded
 from listener-conflict checks. `keep_alive_count = 0` is accepted and preserves
-OpenSSH's no-termination behavior.
+OpenSSH's no-termination behavior. `host` and `user` are passed directly to the
+system `ssh` argv; invalid aliases or names are diagnosed by OpenSSH and
+`tunneld doctor`, without shell interpretation.
 
 ~~~console
 tunneld check
@@ -202,8 +204,13 @@ tunneld --version
   when mtime changes.
 - Invalid edits leave current tunnels running and appear as a config error.
 - `down NAME` stays stopped until `up NAME` or `restart NAME`.
+- IPC requests and responses are capped at 1 MiB. The runtime directory is
+  mode `0700` and the control socket is mode `0600`.
 - Logs live under `$XDG_RUNTIME_DIR/tunneld/logs/`, falling back to
   `~/.cache/tunneld/logs/`.
+- The PID file is informational and overwritten at startup; daemon liveness is
+  determined through IPC. Like any Unix process, `SIGKILL` can leave a stale
+  PID file, which does not prevent the next start.
 
 ## systemd user service
 

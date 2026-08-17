@@ -1,7 +1,7 @@
 [project]
 name = "tunneld"
-version = "0.1.0"
-description = "Config-driven SSH tunnel manager: one ssh connection per host, many -L/-D/-R forwards, auto-reconnect."
+version = "0.2.0"
+description = "Config-driven SSH tunnel manager: one SSH connection per tunnel, many -L/-D/-R forwards, auto-reconnect."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }

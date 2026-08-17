@@ -120,6 +120,34 @@ class Supervisor:
                 ],
             }
 
+    def _record_spawn_failure_locked(
+        self, message: str, logf, terminate_process: bool = False
+    ) -> None:
+        proc = self.proc
+        if terminate_process and proc is not None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=1)
+            except Exception:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=1)
+                except Exception:
+                    pass
+            if proc.stdout is not None:
+                try:
+                    proc.stdout.close()
+                except OSError:
+                    pass
+        try:
+            logf.write((message + "\n").encode("utf-8", errors="replace"))
+        finally:
+            logf.close()
+        self.proc = None
+        self._started_at = None
+        self.state = "reconnecting"
+        self.last_error = message
+
     def _spawn_locked(self) -> None:
         logf = open(self.log_path, "ab")
         self.state = "starting"
@@ -133,17 +161,18 @@ class Supervisor:
                 stdin=subprocess.DEVNULL,
             )
         except Exception as exc:
-            message = f"failed to start ssh: {exc}"
-            logf.write((message + "\n").encode("utf-8", errors="replace"))
-            logf.close()
-            self.proc = None
-            self._started_at = None
-            self.state = "reconnecting"
-            self.last_error = message
+            self._record_spawn_failure_locked(f"failed to start ssh: {exc}", logf)
             return
-        threading.Thread(
-            target=self._pump, args=(self.proc.stdout, logf), daemon=True
-        ).start()
+        try:
+            pump_thread = threading.Thread(
+                target=self._pump, args=(self.proc.stdout, logf), daemon=True
+            )
+            pump_thread.start()
+        except Exception as exc:
+            self._record_spawn_failure_locked(
+                f"failed to start log pump: {exc}", logf, terminate_process=True
+            )
+            return
         time.sleep(0.2)
         if self.proc.poll() is None:
             self.state = "running"

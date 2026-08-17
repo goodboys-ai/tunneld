@@ -66,3 +66,17 @@ def test_identity_and_keep_alive_overrides():
     assert os.path.expanduser("~/key") in argv
     assert "ServerAliveInterval=15" in argv
     assert "ServerAliveCountMax=4" in argv
+
+
+def test_ipv6_endpoints_preserve_openssh_bracket_syntax():
+    value = TunnelConfig(
+        name="ipv6",
+        host="host",
+        forwards=[
+            LocalForwardConfig(local="[::1]:15432", remote="[2001:db8::10]:5432")
+        ],
+        remote_forwards=[RemoteForwardConfig(local="[::1]:8080", remote="[::1]:18080")],
+    )
+    argv = build_command(value, DefaultsConfig())
+    assert option_values(argv, "-L") == ["[::1]:15432:[2001:db8::10]:5432"]
+    assert option_values(argv, "-R") == ["[::1]:18080:[::1]:8080"]

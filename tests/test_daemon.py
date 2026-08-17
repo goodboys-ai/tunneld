@@ -1,3 +1,8 @@
+import stat
+import threading
+import time
+
+from tunneld import state
 from tunneld.config import parse_config
 from tunneld.daemon import Daemon
 
@@ -119,3 +124,24 @@ def test_failed_reload_preserves_last_good_config(tmp_path):
     assert not daemon.reload()
     assert daemon.config is previous
     assert "loacl" in daemon.config_error
+
+
+def test_control_socket_is_private_and_removed_on_shutdown(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    state.ensure_runtime_dir()
+    daemon = Daemon(str(tmp_path / "config.toml"))
+    thread = threading.Thread(target=daemon._serve)
+    thread.start()
+
+    socket_path = state.socket_path()
+    for _ in range(50):
+        if socket_path.exists():
+            break
+        time.sleep(0.02)
+    assert socket_path.exists()
+    assert stat.S_IMODE(socket_path.stat().st_mode) == 0o600
+
+    daemon._stop.set()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert not socket_path.exists()
