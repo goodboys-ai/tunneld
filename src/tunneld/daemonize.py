@@ -25,6 +25,7 @@ def daemon_command(config_path: str) -> list[str]:
 
 
 def spawn_daemon(config_path: str) -> None:
+    """Spawn tunneld as a detached process using the active interpreter."""
     state.ensure_runtime_dir()
     logf = open(str(state.daemon_log_path()), "ab")
     subprocess.Popen(

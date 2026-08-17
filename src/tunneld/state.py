@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 def config_path() -> Path:
+    """Return the configured TOML path using XDG defaults."""
     env = os.environ.get("TUNNELD_CONFIG")
     if env:
         return Path(env)
@@ -17,6 +18,7 @@ def config_path() -> Path:
 
 
 def runtime_dir() -> Path:
+    """Return the private runtime directory for daemon state."""
     base = os.environ.get("XDG_RUNTIME_DIR")
     if not base:
         base = os.path.join(os.path.expanduser("~"), ".cache")
@@ -24,22 +26,27 @@ def runtime_dir() -> Path:
 
 
 def socket_path() -> Path:
+    """Return the daemon control socket path."""
     return runtime_dir() / "tunneld.sock"
 
 
 def pid_path() -> Path:
+    """Return the informational daemon PID file path."""
     return runtime_dir() / "tunneld.pid"
 
 
 def log_dir() -> Path:
+    """Return the directory containing per-tunnel logs."""
     return runtime_dir() / "logs"
 
 
 def daemon_log_path() -> Path:
+    """Return the detached daemon diagnostic log path."""
     return runtime_dir() / "tunneld.log"
 
 
 def ensure_runtime_dir() -> Path:
+    """Create private runtime and log directories and return their root."""
     d = runtime_dir()
     d.mkdir(parents=True, exist_ok=True)
     log_dir().mkdir(parents=True, exist_ok=True)

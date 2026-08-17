@@ -16,6 +16,7 @@ One `[[tunnels]]` entry means one SSH connection. Every entry in its
 - Strict Pydantic validation with unknown-key rejection and useful field paths.
 - Per-forward status rows, optional labels, listener conflict checks, and JSON Schema.
 - Uses system `ssh`, preserving `~/.ssh/config`, ssh-agent, ProxyJump, and known_hosts.
+- Ships a PEP 561 `py.typed` marker for type-checking library consumers.
 
 ## Requirements
 
@@ -180,8 +181,9 @@ not a destination-service health check.
 
 ~~~text
 tunneld up [NAMES...]             start enabled tunnels
-tunneld down [NAMES...]           stop tunnels but keep the daemon
-tunneld down --kill-daemon        stop tunnels and daemon
+tunneld down [NAMES...]           stop named tunnels; with no names, stop daemon
+tunneld down --keep-daemon        stop all tunnels but keep the daemon
+tunneld down --kill-daemon        explicitly stop tunnels and daemon
 tunneld restart [NAMES...]        restart tunnels
 tunneld reload                    reload and converge immediately
 tunneld status                    show tunnel and forwarding-entry state
@@ -197,13 +199,16 @@ tunneld --version
 
 ## Daemon behavior
 
-- `up` starts a detached daemon if necessary.
+- `up` starts a detached daemon if necessary and replaces a daemon using an
+  incompatible IPC protocol after an upgrade.
 - Every SSH process uses `ExitOnForwardFailure=yes` and configured keepalives.
 - A dropped process reconnects using the configured delay range.
 - The watcher performs one `stat` at the configured interval and only parses
   when mtime changes.
 - Invalid edits leave current tunnels running and appear as a config error.
-- `down NAME` stays stopped until `up NAME` or `restart NAME`.
+- `down NAME` stays stopped until `up NAME` or `restart NAME`; it leaves other
+  tunnels and the daemon running. Plain `down` stops everything and exits the
+  daemon; use `down --keep-daemon` to retain the watcher.
 - IPC requests and responses are capped at 1 MiB. The runtime directory is
   mode `0700` and the control socket is mode `0600`.
 - Logs live under `$XDG_RUNTIME_DIR/tunneld/logs/`, falling back to

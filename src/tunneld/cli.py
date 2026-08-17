@@ -14,13 +14,13 @@ import typer
 
 from . import __version__, daemonize, state, ui
 from .config import ConfigError, config_schema, load_config
-from .ipc import IPCError, send_request
+from .ipc import IPC_PROTOCOL_VERSION, IPCError, send_request
 from .templates import FULL_CONFIG, MINIMAL_CONFIG
 
 app = typer.Typer(
     no_args_is_help=True,
     invoke_without_command=True,
-    help="Config-driven SSH tunnel manager (one ssh connection per host).",
+    help="Config-driven SSH tunnel manager (one SSH connection per tunnel).",
 )
 
 
@@ -34,6 +34,7 @@ def main(
         False, "--version", is_eager=True, help="Show version and exit"
     ),
 ):
+    """Initialize global CLI state and handle the eager version option."""
     if version:
         typer.echo(f"tunneld {__version__}")
         raise typer.Exit()
@@ -48,21 +49,58 @@ def _safe(name: str) -> str:
     return "".join(c if c.isalnum() or c in "-_." else "_" for c in name)
 
 
-def _ensure_daemon(ctx: typer.Context) -> None:
-    path = _cfg(ctx)
+def _daemon_compatible(data: dict) -> bool:
+    daemon = data.get("daemon")
+    return (
+        isinstance(daemon, dict)
+        and daemon.get("protocol_version") == IPC_PROTOCOL_VERSION
+    )
+
+
+def _incompatible_daemon_message() -> str:
+    return (
+        "daemon protocol is incompatible with this CLI; run "
+        "'tunneld down --kill-daemon' and then 'tunneld up'"
+    )
+
+
+def _stop_incompatible_daemon() -> None:
     try:
-        send_request("status")
-        return
-    except IPCError:
-        pass
-    daemonize.spawn_daemon(str(path))
+        send_request("shutdown")
+    except IPCError as exc:
+        raise RuntimeError(_incompatible_daemon_message()) from exc
     for _ in range(50):
         time.sleep(0.1)
         try:
             send_request("status")
+        except IPCError:
             return
+    raise RuntimeError(
+        _incompatible_daemon_message() + " (daemon did not stop after shutdown)"
+    )
+
+
+def _ensure_daemon(ctx: typer.Context) -> None:
+    path = _cfg(ctx)
+    try:
+        data = send_request("status")
+    except IPCError:
+        data = None
+    if data is not None:
+        if _daemon_compatible(data):
+            return
+        _stop_incompatible_daemon()
+
+    daemonize.spawn_daemon(str(path))
+    for _ in range(50):
+        time.sleep(0.1)
+        try:
+            data = send_request("status")
         except IPCError:
             continue
+        if _daemon_compatible(data):
+            return
+        raise RuntimeError(_incompatible_daemon_message())
     raise RuntimeError("daemon did not come up; check " + str(state.daemon_log_path()))
 
 
@@ -74,6 +112,9 @@ def _wait_for_up(names: Optional[List[str]], seconds: int) -> None:
         except IPCError:
             time.sleep(0.2)
             continue
+        if not _daemon_compatible(data):
+            ui.error(_incompatible_daemon_message())
+            return
         rows = data.get("tunnels", [])
         target = set(names) if names else None
         relevant = [
@@ -124,14 +165,23 @@ def down(
     ctx: typer.Context,
     names: List[str] = typer.Argument(None, help="Tunnel names (default: all)"),
     kill_daemon: bool = typer.Option(
-        False, "--kill-daemon", help="Also stop the daemon"
+        False, "--kill-daemon", help="Stop the daemon (retained for compatibility)"
+    ),
+    keep_daemon: bool = typer.Option(
+        False, "--keep-daemon", help="Keep the daemon after stopping all tunnels"
     ),
 ):
-    """Stop tunnels."""
-    if kill_daemon:
+    """Stop named tunnels, or stop everything and the daemon by default."""
+    if kill_daemon and keep_daemon:
+        ui.error("--kill-daemon and --keep-daemon cannot be used together")
+        raise typer.Exit(2)
+    should_shutdown = kill_daemon or (not names and not keep_daemon)
+    if kill_daemon and names:
+        ui.warn("--kill-daemon ignores tunnel names; stopping everything")
+    if should_shutdown:
         try:
             send_request("shutdown")
-            ui.info("daemon stopped")
+            ui.info("tunnels and daemon stopped")
         except IPCError:
             ui.warn("daemon not running")
         return
@@ -141,7 +191,7 @@ def down(
                 send_request("stop", name=name)
         else:
             send_request("stop")
-        ui.info("tunnels stopped")
+        ui.info("tunnels stopped; daemon kept running")
     except IPCError as exc:
         ui.error(str(exc))
         raise typer.Exit(1)
@@ -181,8 +231,11 @@ def status(ctx: typer.Context):
     """Show tunnels and every configured forwarding entry."""
     try:
         data = send_request("status")
-    except IPCError:
-        ui.error("daemon not running (try 'tunneld up')")
+    except IPCError as exc:
+        ui.error(str(exc))
+        raise typer.Exit(1)
+    if not _daemon_compatible(data):
+        ui.error(_incompatible_daemon_message())
         raise typer.Exit(1)
     ui.render_status(data)
 

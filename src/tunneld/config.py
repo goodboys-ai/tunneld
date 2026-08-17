@@ -80,6 +80,8 @@ NonEmptyString = Annotated[StrictStr, Field(min_length=1)]
 
 
 class StrictModel(BaseModel):
+    """Apply strict, whitespace-normalized validation to all config models."""
+
     model_config = ConfigDict(
         extra="forbid",
         strict=True,
@@ -89,6 +91,8 @@ class StrictModel(BaseModel):
 
 
 class DaemonConfig(StrictModel):
+    """Configure file watching and reconnect backoff."""
+
     watch: StrictBool = True
     watch_interval: PositiveSeconds = 1.5
     reconnect_initial_delay: PositiveSeconds = 1.0
@@ -96,6 +100,7 @@ class DaemonConfig(StrictModel):
 
     @model_validator(mode="after")
     def validate_delays(self) -> "DaemonConfig":
+        """Require the initial reconnect delay not to exceed its maximum."""
         if self.reconnect_initial_delay > self.reconnect_max_delay:
             raise ValueError(
                 "reconnect_initial_delay must not exceed reconnect_max_delay"
@@ -104,24 +109,34 @@ class DaemonConfig(StrictModel):
 
 
 class DefaultsConfig(StrictModel):
+    """Define keepalive defaults inherited by tunnels."""
+
     keep_alive: NonNegativeInt = 30
     keep_alive_count: NonNegativeInt = 3
 
 
 class LabeledForward(StrictModel):
+    """Provide optional status metadata shared by forwarding entries."""
+
     label: Optional[NonEmptyString] = None
 
 
 class LocalForwardConfig(LabeledForward):
+    """Describe one local OpenSSH ``-L`` forwarding entry."""
+
     local: Endpoint
     remote: Endpoint
 
 
 class SocksForwardConfig(LabeledForward):
+    """Describe one dynamic OpenSSH ``-D`` listener."""
+
     local: Endpoint
 
 
 class RemoteForwardConfig(LabeledForward):
+    """Describe one remote OpenSSH ``-R`` forwarding entry."""
+
     local: Endpoint
     remote: Endpoint
 
@@ -143,6 +158,8 @@ _MANAGED_SSH_OPTIONS = {
 
 
 class TunnelConfig(StrictModel):
+    """Configure one SSH process and all forwarding entries it carries."""
+
     name: Name
     host: NonEmptyString
     enabled: StrictBool = True
@@ -161,6 +178,7 @@ class TunnelConfig(StrictModel):
     @field_validator("ssh_options")
     @classmethod
     def validate_ssh_options(cls, options: List[str]) -> List[str]:
+        """Reject malformed or tunneld-managed OpenSSH options."""
         for option in options:
             if "=" not in option:
                 raise ValueError(f"ssh option {option!r} must use Key=value syntax")
@@ -173,6 +191,7 @@ class TunnelConfig(StrictModel):
 
     @model_validator(mode="after")
     def validate_forward_entries(self) -> "TunnelConfig":
+        """Require entries and enforce per-tunnel label/listener uniqueness."""
         entries = list(self.iter_forward_entries())
         if not entries:
             raise ValueError(
@@ -205,6 +224,7 @@ class TunnelConfig(StrictModel):
         return self
 
     def iter_forward_entries(self) -> Iterator[Tuple[str, LabeledForward]]:
+        """Yield every forwarding entry with its configuration field name."""
         for entry in self.forwards:
             yield "forwards", entry
         for entry in self.socks:
@@ -213,9 +233,11 @@ class TunnelConfig(StrictModel):
             yield "remote_forwards", entry
 
     def effective_keep_alive(self, defaults: DefaultsConfig) -> int:
+        """Return the tunnel keepalive interval after default inheritance."""
         return self.keep_alive if self.keep_alive is not None else defaults.keep_alive
 
     def effective_keep_alive_count(self, defaults: DefaultsConfig) -> int:
+        """Return the tunnel keepalive count after default inheritance."""
         return (
             self.keep_alive_count
             if self.keep_alive_count is not None
@@ -250,6 +272,8 @@ def _listeners_conflict(left: Endpoint, right: Endpoint) -> bool:
 
 
 class AppConfig(StrictModel):
+    """Represent the complete validated tunneld configuration."""
+
     daemon: DaemonConfig = Field(default_factory=DaemonConfig)
     defaults: DefaultsConfig = Field(default_factory=DefaultsConfig)
     tunnels: List[TunnelConfig] = Field(default_factory=list)
@@ -258,10 +282,12 @@ class AppConfig(StrictModel):
 
     @property
     def path(self) -> str:
+        """Return the source path attached by :func:`load_config`."""
         return self._path
 
     @model_validator(mode="after")
     def validate_tunnels(self) -> "AppConfig":
+        """Enforce unique tunnel names and cross-tunnel listener safety."""
         names: Dict[str, int] = {}
         local_listeners: List[Tuple[str, str, Endpoint]] = []
         remote_listeners: List[Tuple[str, str, Endpoint]] = []
@@ -321,6 +347,18 @@ def _format_validation_error(error: ValidationError) -> str:
 
 
 def parse_config(document: Dict[str, Any], path: str = "") -> AppConfig:
+    """Validate an in-memory configuration document.
+
+    Args:
+        document: Parsed TOML-compatible mapping.
+        path: Optional source path used in diagnostics and UI output.
+
+    Returns:
+        The strictly validated application configuration.
+
+    Raises:
+        ConfigError: If any schema or cross-entry validation fails.
+    """
     try:
         config = AppConfig.model_validate(document)
     except ValidationError as exc:
@@ -330,6 +368,18 @@ def parse_config(document: Dict[str, Any], path: str = "") -> AppConfig:
 
 
 def load_config(path: Union[str, Path]) -> AppConfig:
+    """Load and strictly validate a UTF-8 TOML configuration file.
+
+    Args:
+        path: TOML file path.
+
+    Returns:
+        The validated application configuration.
+
+    Raises:
+        ConfigError: If TOML parsing or schema validation fails.
+        OSError: If the file cannot be read.
+    """
     path = Path(path)
     try:
         document = _toml.loads(path.read_text(encoding="utf-8-sig"))
@@ -339,6 +389,7 @@ def load_config(path: Union[str, Path]) -> AppConfig:
 
 
 def config_schema() -> Dict[str, Any]:
+    """Return the JSON Schema for the strict application configuration."""
     schema = AppConfig.model_json_schema()
     schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
     schema["$id"] = (

@@ -48,6 +48,7 @@ class Supervisor:
         self._backoff = self.reconnect_initial_delay
 
     def start(self) -> None:
+        """Start SSH and its reconnect watcher if not already running."""
         with self._lock:
             if self.proc is not None and self.proc.poll() is None:
                 return
@@ -58,6 +59,7 @@ class Supervisor:
         self._watch_thread.start()
 
     def stop(self) -> None:
+        """Stop reconnecting, terminate SSH, and join the watcher."""
         self._stop.set()
         with self._lock:
             proc, self.proc = self.proc, None
@@ -77,6 +79,7 @@ class Supervisor:
         self.state = "stopped"
 
     def restart(self) -> None:
+        """Stop and then start the supervised SSH process."""
         self.stop()
         self.start()
 
@@ -87,6 +90,7 @@ class Supervisor:
         reconnect_initial_delay: float,
         reconnect_max_delay: float,
     ) -> None:
+        """Apply config metadata and restart only when SSH argv changes."""
         restart_required = argv != self.argv
         self.tunnel = tunnel
         self.argv = argv
@@ -96,6 +100,7 @@ class Supervisor:
             self.restart()
 
     def status(self) -> Dict:
+        """Return tunnel and per-forward runtime status."""
         with self._lock:
             pid = None
             if self.proc is not None and self.proc.poll() is None:

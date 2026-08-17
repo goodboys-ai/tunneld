@@ -9,11 +9,12 @@ from typing import Any, Callable, Dict, Optional
 
 from . import state
 
+IPC_PROTOCOL_VERSION = 1
 MAX_LINE_BYTES = 1024 * 1024
 
 
 class IPCError(Exception):
-    pass
+    """Report daemon control-channel and protocol failures."""
 
 
 def _decode_line(data: bytearray) -> str:
@@ -56,6 +57,7 @@ def _send_response(conn: socket.socket, payload: Dict[str, Any]) -> None:
 
 
 def send_request(op: str, **args: Any) -> Dict[str, Any]:
+    """Send one bounded request to the daemon and return its data mapping."""
     request = _encode_line({"op": op, "args": args})
     sp = str(state.socket_path())
     if not os.path.exists(sp):

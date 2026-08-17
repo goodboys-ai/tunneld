@@ -12,7 +12,7 @@ from typing import Dict, Optional
 from . import state
 from .command import build_command, build_forward_specs
 from .config import AppConfig, ConfigError, TunnelConfig, load_config
-from .ipc import handle_connection
+from .ipc import IPC_PROTOCOL_VERSION, handle_connection
 from .supervisor import Supervisor
 
 
@@ -21,6 +21,8 @@ def _safe(name: str) -> str:
 
 
 class Daemon:
+    """Own configuration convergence, supervisors, and the IPC server."""
+
     def __init__(self, config_path: str):
         self.config_path = config_path
         self.config: Optional[AppConfig] = None
@@ -32,6 +34,7 @@ class Daemon:
         self._op_lock = threading.RLock()
 
     def load(self) -> bool:
+        """Load the config while preserving the last valid configuration."""
         try:
             config = load_config(self.config_path)
         except (OSError, ConfigError) as exc:
@@ -97,6 +100,7 @@ class Daemon:
                 supervisor.update_config(tunnel, argv, initial_delay, max_delay)
 
     def reload(self) -> bool:
+        """Reload config and converge supervisors when validation succeeds."""
         with self._op_lock:
             if not self.load():
                 return False
@@ -104,11 +108,13 @@ class Daemon:
             return True
 
     def start_all(self) -> None:
+        """Clear manual stops and start every enabled tunnel."""
         with self._lock:
             self.manual_stopped.clear()
         self.apply()
 
     def start_one(self, name: str) -> None:
+        """Start one enabled tunnel by name."""
         tunnel = self._find(name)
         if tunnel is None:
             raise ValueError(f"unknown tunnel {name!r}")
@@ -119,6 +125,7 @@ class Daemon:
         self.apply()
 
     def stop_all(self) -> None:
+        """Stop every supervisor while retaining the daemon."""
         with self._lock:
             names = list(self.sup)
             self.manual_stopped.update(names)
@@ -127,6 +134,7 @@ class Daemon:
             supervisor.stop()
 
     def stop_one(self, name: str) -> None:
+        """Stop one tunnel and remember its manual-stop state."""
         if self._find(name) is None:
             raise ValueError(f"unknown tunnel {name!r}")
         with self._lock:
@@ -136,6 +144,7 @@ class Daemon:
             supervisor.stop()
 
     def restart_all(self) -> None:
+        """Restart every enabled tunnel using current configuration."""
         with self._lock:
             self.manual_stopped.clear()
             supervisors = list(self.sup.values())
@@ -144,6 +153,7 @@ class Daemon:
         self.apply()
 
     def restart_one(self, name: str) -> None:
+        """Restart one enabled tunnel by name."""
         tunnel = self._find(name)
         if tunnel is None:
             raise ValueError(f"unknown tunnel {name!r}")
@@ -172,6 +182,7 @@ class Daemon:
         }
 
     def status_data(self) -> Dict:
+        """Return a protocol-versioned snapshot of daemon and tunnel state."""
         with self._lock:
             cfg = self.config
             config_error = self.config_error
@@ -194,6 +205,7 @@ class Daemon:
         return {
             "daemon": {
                 "pid": os.getpid(),
+                "protocol_version": IPC_PROTOCOL_VERSION,
                 "config": self.config_path,
                 "config_error": config_error,
             },
@@ -201,6 +213,7 @@ class Daemon:
         }
 
     def dispatch(self, op: str, args: Dict) -> Dict:
+        """Dispatch one validated IPC operation and return current status."""
         name = args.get("name")
         if op == "status":
             return self.status_data()
@@ -275,6 +288,7 @@ class Daemon:
             pass
 
     def run(self) -> None:
+        """Run the foreground daemon until shutdown or a termination signal."""
         state.ensure_runtime_dir()
         self.load()
         self.apply()
@@ -291,9 +305,11 @@ class Daemon:
             pass
 
     def shutdown(self) -> None:
+        """Request an orderly daemon shutdown."""
         self._stop.set()
 
     def shutdown_children(self) -> None:
+        """Stop and remove every owned tunnel supervisor."""
         with self._lock:
             supervisors = list(self.sup.values())
             self.sup.clear()

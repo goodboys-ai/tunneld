@@ -26,14 +26,17 @@ STATE_COLORS = {
 
 
 def info(msg: str) -> None:
+    """Render a successful informational message."""
     console.print(f"[green]OK[/green] {escape(str(msg))}")
 
 
 def error(msg: str) -> None:
+    """Render an error message."""
     console.print(f"[bold red]ERROR[/bold red] {escape(str(msg))}")
 
 
 def warn(msg: str) -> None:
+    """Render a warning message."""
     console.print(f"[yellow]WARN[/yellow] {escape(str(msg))}")
 
 
@@ -45,22 +48,32 @@ def _entry_table(entries, title: str = "") -> Table:
     table.add_column("Listen")
     table.add_column("Target")
     table.add_column("State")
-    for entry in entries:
+    safe_entries = entries if isinstance(entries, list) else []
+    for entry in safe_entries:
+        if not isinstance(entry, dict):
+            continue
         entry_state = entry.get("state", "configured")
         color = STATE_COLORS.get(entry_state, "white")
         table.add_row(
             escape(entry.get("label") or "—"),
-            entry["kind"],
-            entry["listen_side"],
-            escape(entry["listen"]),
-            escape(entry["target"]),
+            str(entry.get("kind", "?")),
+            str(entry.get("listen_side", "?")),
+            escape(str(entry.get("listen", "?"))),
+            escape(str(entry.get("target", "?"))),
             f"[{color}]{entry_state}[/{color}]",
         )
     return table
 
 
 def render_status(data: dict) -> None:
+    """Render a defensive daemon and per-forward status snapshot."""
+    if not isinstance(data, dict):
+        error("malformed daemon status response")
+        return
     daemon = data.get("daemon", {})
+    if not isinstance(daemon, dict):
+        error("malformed daemon status response")
+        return
     console.print(
         f"[bold]tunneld[/bold]  pid={daemon.get('pid')}  "
         f"config={escape(str(daemon.get('config')))}"
@@ -68,15 +81,21 @@ def render_status(data: dict) -> None:
     if daemon.get("config_error"):
         console.print(f"[red]config error:[/red] {escape(str(daemon['config_error']))}")
     tunnels = data.get("tunnels", [])
+    if not isinstance(tunnels, list):
+        error("malformed daemon tunnel status")
+        return
     if not tunnels:
         warn("no configured tunnels")
         return
     for tunnel in tunnels:
-        tunnel_state = tunnel["state"]
+        if not isinstance(tunnel, dict):
+            warn("ignored malformed tunnel status entry")
+            continue
+        tunnel_state = str(tunnel.get("state", "unknown"))
         color = STATE_COLORS.get(tunnel_state, "white")
         details = [
-            f"[bold]{escape(tunnel['name'])}[/bold]",
-            escape(tunnel["host"]),
+            f"[bold]{escape(str(tunnel.get('name', '?')))}[/bold]",
+            escape(str(tunnel.get("host", "?"))),
             f"[{color}]{tunnel_state}[/{color}]",
         ]
         if tunnel.get("pid"):
@@ -85,11 +104,12 @@ def render_status(data: dict) -> None:
             details.append(f"uptime={tunnel['uptime']}")
         console.print("  ".join(details))
         if tunnel.get("last_error"):
-            console.print(f"  [red]{escape(tunnel['last_error'])}[/red]")
+            console.print(f"  [red]{escape(str(tunnel['last_error']))}[/red]")
         console.print(_entry_table(tunnel.get("forwards", [])))
 
 
 def render_list(config) -> None:
+    """Render configured tunnels without contacting the daemon."""
     console.print(f"[bold]Config:[/bold] {escape(config.path)}")
     for tunnel in config.tunnels:
         state = "configured" if tunnel.enabled else "disabled"
@@ -103,6 +123,7 @@ def render_list(config) -> None:
 
 
 def render_check(config, show_command: bool = False) -> None:
+    """Render validated entries and optionally their OpenSSH commands."""
     info(f"config valid: {config.path}")
     for tunnel in config.tunnels:
         state = "configured" if tunnel.enabled else "disabled"
@@ -115,6 +136,7 @@ def render_check(config, show_command: bool = False) -> None:
 
 
 def tail(path: Path, lines: int, follow: bool) -> None:
+    """Print the tail of a binary log and optionally follow new lines."""
     with open(path, "rb") as fh:
         fh.seek(0, 2)
         pos = fh.tell()

@@ -5,6 +5,7 @@ import time
 from tunneld import state
 from tunneld.config import parse_config
 from tunneld.daemon import Daemon
+from tunneld.ipc import IPC_PROTOCOL_VERSION
 
 
 def test_status_includes_stopped_and_disabled_forward_entries(tmp_path):
@@ -28,7 +29,9 @@ def test_status_includes_stopped_and_disabled_forward_entries(tmp_path):
     daemon = Daemon(str(tmp_path / "tunneld.toml"))
     daemon.config = config
 
-    rows = {row["name"]: row for row in daemon.status_data()["tunnels"]}
+    status = daemon.status_data()
+    assert status["daemon"]["protocol_version"] == IPC_PROTOCOL_VERSION
+    rows = {row["name"]: row for row in status["tunnels"]}
     assert rows["ready"]["state"] == "stopped"
     assert rows["ready"]["forwards"][0]["label"] == "proxy"
     assert rows["ready"]["forwards"][0]["state"] == "stopped"

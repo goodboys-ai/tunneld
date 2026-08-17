@@ -12,6 +12,8 @@ from .config import DefaultsConfig, Endpoint, TunnelConfig
 
 @dataclass(frozen=True)
 class ForwardSpec:
+    """Normalized OpenSSH forwarding argument and display metadata."""
+
     label: Optional[str]
     kind: str
     option: str
@@ -21,6 +23,7 @@ class ForwardSpec:
     target: str
 
     def status(self, state: str) -> dict:
+        """Return this forwarding entry as a daemon status mapping."""
         return {
             "label": self.label,
             "kind": self.kind,
@@ -38,22 +41,26 @@ def _entry_state(tunnel_state: str) -> str:
 
 
 def listener_argument(endpoint: Endpoint) -> str:
+    """Convert a validated listener endpoint to OpenSSH syntax."""
     return str(endpoint)
 
 
 def target_argument(endpoint: Endpoint) -> str:
+    """Convert a validated target endpoint to OpenSSH syntax."""
     if isinstance(endpoint, int):
         return f"localhost:{endpoint}"
     return endpoint
 
 
 def display_endpoint(endpoint: Endpoint) -> str:
+    """Return a normalized endpoint for human-readable status."""
     if isinstance(endpoint, int):
         return f"localhost:{endpoint}"
     return endpoint
 
 
 def build_forward_specs(tunnel: TunnelConfig) -> List[ForwardSpec]:
+    """Build normalized forwarding specifications for one tunnel."""
     specs: List[ForwardSpec] = []
     for entry in tunnel.forwards:
         listen_arg = listener_argument(entry.local)
@@ -100,6 +107,7 @@ def build_forward_specs(tunnel: TunnelConfig) -> List[ForwardSpec]:
 
 
 def build_command(tunnel: TunnelConfig, defaults: DefaultsConfig) -> List[str]:
+    """Build the shell-free OpenSSH argv for one tunnel."""
     cmd = [
         "ssh",
         "-N",
@@ -125,4 +133,5 @@ def build_command(tunnel: TunnelConfig, defaults: DefaultsConfig) -> List[str]:
 
 
 def command_display(tunnel: TunnelConfig, defaults: DefaultsConfig) -> str:
+    """Return a shell-escaped display form of the OpenSSH argv."""
     return shlex.join(build_command(tunnel, defaults))
